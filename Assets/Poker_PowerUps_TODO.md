@@ -95,23 +95,38 @@ Nothing extra to build. This comes from the tier table: a weak hand can still wi
 
 ## 3. Build order (checklist)
 
-**Progress key:** `[x]` = done, `[ ]` = not done. Updated after the Royal Flush, Tier and TierOdds files and the human-controls / hold-to-look changes. These changes are written but **not yet compiled or run in Unity**, so test them before treating them as finished.
+**Progress key:** `[x]` = done, `[ ]` = not done. Last synced against the full code on 2026-10-28 (every `.cs` file read). Everything marked done is written but **has never been compiled or run in Unity**, and the repo has no tests, so treat `[x]` as "code exists", not "verified".
+
+**Sync findings (code vs this list), and what was fixed:**
+- Two Phase 0 items were already in the code but unticked; now ticked (card replacement, Replace/Peek/Reveal events).
+- **Fixed:** `PokerTable3D.DealCard` used to treat every non-Hole, non-Burn event as a board card. It now handles Replace, Peek and Reveal before that code runs.
+- **Fixed:** the test framework is now listed in `manifest.json`; `Readme.asset` is deleted.
+- **Decided:** the folder stays `Assets/Scripts/Powerups/` (lowercase u, as it is today). Namespace is `Holdem.PowerUps`. Section 6 now uses the same spelling.
+- **Still open, needs Unity:** `Powerups/`, `Core/`, `Tier.cs` and `TierOdds.cs` have no `.meta` files. Unity creates them on first open; commit them afterwards so the script GUIDs stay stable.
+- **Added:** the test project (see Phase 0). Still unproven until the Test Runner has been run.
+- The new `.asmdef` files also have no `.meta` yet; Unity creates them on first open. Commit them with the rest.
+- Scene wiring is fine: `PokerTable3D` is attached once in `SampleScene`.
+- `TierOdds` rows were checked by hand: each adds up to 1000, Royal Flush is 100% Legendary, and the "better hand never worse" rule holds. `Validate()` exists but nothing calls it yet.
 
 ### Phase 0: Fix the foundation
-- [ ] Add **card replacement support** to the deck and dealer (put a card back, replace a card, record it) so the end-of-hand 52-card check doesn't throw when a power-up changes a card.
-- [ ] Add new deal event kinds (Replace, Peek, Reveal) so the table can animate card-changing power-ups.
+- [x] Add **card replacement support** to the deck and dealer (put a card back, replace a card, record it) so the end-of-hand 52-card check doesn't throw when a power-up changes a card. *(done: `Deck.Insert/Take/InsertRandom`, `CardDealer.Replace`, `GameEngine.ReplaceHoleCard/ReplaceBoardCard`; not yet compiled or tested)*
+- [x] Add new deal event kinds (Replace, Peek, Reveal) so the table can animate card-changing power-ups. *(done in `CardDealer.cs` and `GameEngine.PeekDeck/RevealHoleCard`; `PokerTable3D` now plays them too, see the item below)*
+- [x] **Make `PokerTable3D` handle Replace, Peek and Reveal events** *(done: `PokerTable3D.cs`. Replace swaps the card object in place and the old card slides back to the deck. Reveal flips a bot's or board card face-up for you. Peek draws nothing for now; the secret-view panel comes with the power-up UI. Known limit: revealing YOUR OWN card to others has no visual yet, because hold-to-look controls your cards. Not compiled or run yet.)*
+- [x] Add `com.unity.test-framework` to `Packages/manifest.json`. *(done: version 1.4.6, the one the lock file already asks for; Unity may bump it on open)*
 - [ ] Add a **game event stream** (bet, fold, chips to pot, hand result, power-up awarded, used, discarded, upgraded). The 3D table and the simulation both read it.
 - [x] Add **Royal Flush** as its own 10th hand rank in `HandEvaluator` (today it is a Straight Flush with an Ace high), so the award system can tell it apart. *(done: `HandEvaluator.cs`; Royal Flush is category 9)*
 - [ ] Add a structured **hand result** (who won, how much, with what hand), not just log text.
-- [ ] Add an `.asmdef` for the `Holdem` folder and an **EditMode test project**.
-- [ ] Write the evaluator tests (the README says all 133,784,560 hands were checked, but no tests are in the repo, so nobody can re-run it).
-- [ ] Delete template leftovers (`TutorialInfo`, `Readme.asset`).
+- [x] Add an `.asmdef` for the `Holdem` folder and an **EditMode test project**. *(done, not yet opened in Unity: `Scripts/Holdem/Holdem.asmdef`, `Scripts/Powerups/Holdem.PowerUps.asmdef` (needed because a test assembly cannot see loose scripts), `Tests/EditMode/Holdem.Tests.EditMode.asmdef`. Both game assemblies have `noEngineReferences` on, so they stay plain C#. `Table/` stays in the default assembly and still sees them.)*
+- [x] Write the evaluator tests. *(done: `HandEvaluatorTests.cs`. Every one of the 2,598,960 five-card hands is counted against the known table (fast). The full 133,784,560 seven-card run is there too, marked `Explicit` so it only runs when you right-click it, about 15 to 60 seconds. The README claim counts as verified only after that test has passed once.)*
+- [x] Write tests for the rest of the existing code. *(done, same folder: `DeckTests.cs`, `CardDealerTests.cs`, `GameEngineTests.cs` (deal order, TryAct, fold-out, a rigged showdown, chip conservation over 60 bot hands, hole/board replace, peek, reveal), `TierTests.cs` (Tier plus all of `TierOdds`), and `TestUtil.cs` with helpers like `DeckWithTop("As", "2c", ...)`.)*
+- [ ] **Open the project, run Window > General > Test Runner > EditMode > Run All, and fix anything red.** None of the tests have ever been compiled or run, so expect a few small fixes on the first run. Then run the Explicit seven-card test once.
+- [x] Delete template leftovers (`TutorialInfo`, `Readme.asset`). *(done: `TutorialInfo` was already gone; `Readme.asset` and its `.meta` are deleted)*
 
 ### Phase 1: Let the human play
 - [x] Fold / Check-Call / Raise buttons and a raise slider, using the engine's `TryAct`. *(done: `PokerTable3D.cs`, plus an "Auto-play me" toggle for quick tests)*
 - [x] Wait for the human on their turn; bots keep their current think delay. *(done)*
 - [x] Your hole cards start face-down; hold the left mouse button on a card, or hold H, to look at them, and they flip back when you let go. *(done; the table tracks which cards are face-up, which a later power-up needs)*
-- [ ] Show the winner and the winning hand at the end of each hand.
+- [ ] Show the winner and the winning hand at the end of each hand. *(not started: the winner only appears in the log lines; `_banner` stays empty after a hand. Needs the structured hand result from Phase 0.)*
 
 ### Phase 2: Power-up data model
 - [x] `Tier` enum (Common, Rare, Epic, Mythic, Legendary). *(done: `PowerUps/Core/Tier.cs`, with a Legendary-can't-upgrade check and `NextUp()`)*
@@ -266,7 +281,7 @@ Your current folders are `Scripts/Holdem` and `Scripts/Table`. I'd keep them and
 Assets/Scripts/
   Holdem/                  (engine, existing)
   Table/                   (3D table, existing)
-  PowerUps/
+  Powerups/                (real folder name today; keep this spelling or rename once)
     Core/                  (tier enum, definition and instance, inventory, award system, registry)
     powerone/
     powertwo/
@@ -274,17 +289,17 @@ Assets/Scripts/
     powerfour/
   Simulation/              (headless runner, statistics, reports)
 Assets/Tests/
-  EditMode/                (evaluator, inventory, award, per-power-up tests)
+  EditMode/                (written: evaluator, deck, dealer, engine, tier odds. To come: inventory, award, per-power-up tests)
 ```
 
 ---
 
 ## 7. What I'd do next
 
-1. Phase 0, card replacement and the event stream, because every power-up depends on it.
-2. Phase 2, the data model and the inventory rules, with tests.
-3. Your first two power-ups, tested through the scenario builder.
-4. The simulation, so you see win rates early.
+1. Run the tests in Unity and fix anything red (Phase 0, last item). Everything after this builds on that code.
+2. Hand result and game event stream (Phase 0), so the table can show the winner and the award step knows who won with what.
+3. End-of-hand hook, then the power-up data model and inventory with tests (Phases 3 and 2).
+4. Your first two power-ups, tested through the scenario builder, then the simulation.
 
 To go further I need:
 - your answers to Q1 to Q8,

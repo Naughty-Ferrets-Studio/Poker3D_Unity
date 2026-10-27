@@ -331,6 +331,14 @@ namespace HoldemTable
 
         private void DealCard(DealEvent e)
         {
+            // Power-up events: these do not take a new card off the deck onto the table, so they must never fall through to the code below.
+            switch (e.Kind)
+            {
+                case DealKind.Replace: ReplaceCard(e); return;
+                case DealKind.Reveal:  RevealCard(e);  return;
+                case DealKind.Peek:    return; // nothing to draw: the card stays in the deck; a "secret view" panel comes with the power-up UI
+            }
+
             CardObject card = CardObject.Create(e.Card, transform);
             _all.Add(card);
             card.SetImmediate(DeckSpawn, Quaternion.identity, false);
@@ -352,13 +360,55 @@ namespace HoldemTable
                     target = BurnPos + Vector3.up * (_burned * 0.004f);
                     _burned++;
                     break;
-                default: // Flop, Turn, River
+                default: // Flop, Turn, River (Replace, Peek and Reveal were handled above)
                     target = BoardPos(_board.Count);
                     _board.Add(card);
                     faceUp = true;
                     break;
             }
             card.StartCoroutine(card.MoveTo(target, yaw, faceUp, cardTravel));
+        }
+
+        /// <summary>A card on the table goes back to the deck and a new one takes its exact place (hole card or board card).</summary>
+        private void ReplaceCard(DealEvent e)
+        {
+            if (!e.Previous.HasValue) return;
+            if (e.Seat >= _hole.Count) return;
+            List<CardObject> list = e.Seat >= 0 ? _hole[e.Seat] : _board;
+            int idx = list.FindIndex(c => c != null && c.Card == e.Previous.Value);
+            if (idx < 0)
+            {
+                Debug.LogWarning("Replace event: no card object found for " + e.Previous.Value);
+                return;
+            }
+
+            CardObject old = list[idx];
+            Vector3 pos = e.Seat >= 0 ? HolePos(e.Seat, idx) : BoardPos(idx);
+            Quaternion yaw = e.Seat >= 0 ? _seatYaw[e.Seat] : Quaternion.identity;
+            bool faceUp = e.Seat < 0 || (_showAll && !_engine.Players[e.Seat].IsHuman); // your own cards stay face-down until you hold them
+
+            old.StartCoroutine(old.MoveAndDestroy(DeckSpawn, cardTravel)); // the old card slides back into the deck
+
+            CardObject fresh = CardObject.Create(e.Card, transform);
+            _all.Add(fresh);
+            fresh.SetImmediate(DeckSpawn, Quaternion.identity, false);
+            fresh.StartCoroutine(fresh.MoveTo(pos, yaw, faceUp, cardTravel));
+            list[idx] = fresh;
+        }
+
+        /// <summary>
+        /// A card already on the table is shown to somebody. Only the human's screen matters, so reveals meant for a bot are ignored.
+        /// Your own hole cards are skipped: they already follow the hold-to-look rule in Update().
+        /// </summary>
+        private void RevealCard(DealEvent e)
+        {
+            if (e.Viewer >= 0 && (e.Viewer >= _engine.Players.Count || !_engine.Players[e.Viewer].IsHuman)) return;
+            if (e.Seat >= _hole.Count) return;
+            if (e.Seat >= 0 && _engine.Players[e.Seat].IsHuman) return;
+
+            List<CardObject> list = e.Seat >= 0 ? _hole[e.Seat] : _board;
+            CardObject c = list.Find(x => x != null && x.Card == e.Card);
+            if (c != null && !c.FaceUp) c.StartCoroutine(c.Flip(true, 0.35f));
         }
 
         private void SetShowAll(bool on)
