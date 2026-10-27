@@ -95,7 +95,7 @@ Nothing extra to build. This comes from the tier table: a weak hand can still wi
 
 ## 3. Build order (checklist)
 
-**Progress key:** `[x]` = done, `[ ]` = not done. Last synced against the full code on 2026-10-28 (every `.cs` file read). Everything marked done is written but **has never been compiled or run in Unity**, and the repo has no tests, so treat `[x]` as "code exists", not "verified".
+**Progress key:** `[x]` = done, `[ ]` = not done. Last synced against the full code on 2026-10-28 (every `.cs` file read). The code compiles in Unity 6000.6.6f1 and the 82 EditMode tests pass. Items marked done in the table, card-event and power-up-core areas are covered by those tests where the notes say so; the scene itself (SampleScene, the table animations, flip direction, the new banners) still needs a play-test after each change.
 
 **Sync findings (code vs this list), and what was fixed:**
 - Two Phase 0 items were already in the code but unticked; now ticked (card replacement, Replace/Peek/Reveal events).
@@ -103,7 +103,7 @@ Nothing extra to build. This comes from the tier table: a weak hand can still wi
 - **Fixed:** the test framework is now listed in `manifest.json`; `Readme.asset` is deleted.
 - **Decided:** the folder stays `Assets/Scripts/Powerups/` (lowercase u, as it is today). Namespace is `Holdem.PowerUps`. Section 6 now uses the same spelling.
 - **Still open, needs Unity:** `Powerups/`, `Core/`, `Tier.cs` and `TierOdds.cs` have no `.meta` files. Unity creates them on first open; commit them afterwards so the script GUIDs stay stable.
-- **Added:** the test project (see Phase 0). Still unproven until the Test Runner has been run.
+- **Added:** the test project (see Phase 0). 82 tests pass in Unity.
 - The new `.asmdef` files also have no `.meta` yet; Unity creates them on first open. Commit them with the rest.
 - Scene wiring is fine: `PokerTable3D` is attached once in `SampleScene`.
 - `TierOdds` rows were checked by hand: each adds up to 1000, Royal Flush is 100% Legendary, and the "better hand never worse" rule holds. `Validate()` exists but nothing calls it yet.
@@ -119,14 +119,18 @@ Nothing extra to build. This comes from the tier table: a weak hand can still wi
 - [x] Add an `.asmdef` for the `Holdem` folder and an **EditMode test project**. *(done, not yet opened in Unity: `Scripts/Holdem/Holdem.asmdef`, `Scripts/Powerups/Holdem.PowerUps.asmdef` (needed because a test assembly cannot see loose scripts), `Tests/EditMode/Holdem.Tests.EditMode.asmdef`. Both game assemblies have `noEngineReferences` on, so they stay plain C#. `Table/` stays in the default assembly and still sees them.)*
 - [x] Write the evaluator tests. *(done: `HandEvaluatorTests.cs`. Every one of the 2,598,960 five-card hands is counted against the known table (fast). The full 133,784,560 seven-card run is there too, marked `Explicit` so it only runs when you right-click it, about 15 to 60 seconds. The README claim counts as verified only after that test has passed once.)*
 - [x] Write tests for the rest of the existing code. *(done, same folder: `DeckTests.cs`, `CardDealerTests.cs`, `GameEngineTests.cs` (deal order, TryAct, fold-out, a rigged showdown, chip conservation over 60 bot hands, hole/board replace, peek, reveal), `TierTests.cs` (Tier plus all of `TierOdds`), and `TestUtil.cs` with helpers like `DeckWithTop("As", "2c", ...)`.)*
-- [ ] **Open the project, run Window > General > Test Runner > EditMode > Run All, and fix anything red.** None of the tests have ever been compiled or run, so expect a few small fixes on the first run. Then run the Explicit seven-card test once.
+- [x] **Open the project, run the EditMode tests, fix anything red.** *(done 2026-10-28: 82 passed, 0 failed, 1 not run. Nothing needed fixing. The one not run is the Explicit seven-card test below.)*
+- [ ] Run the Explicit test `AllSevenCardHands_MatchKnownFrequencies` once (right-click it in the Test Runner, then Run). Until it passes, the README's "133 million hands" claim is unverified.
 - [x] Delete template leftovers (`TutorialInfo`, `Readme.asset`). *(done: `TutorialInfo` was already gone; `Readme.asset` and its `.meta` are deleted)*
 
 ### Phase 1: Let the human play
 - [x] Fold / Check-Call / Raise buttons and a raise slider, using the engine's `TryAct`. *(done: `PokerTable3D.cs`, plus an "Auto-play me" toggle for quick tests)*
 - [x] Wait for the human on their turn; bots keep their current think delay. *(done)*
-- [x] Your hole cards start face-down; hold the left mouse button on a card, or hold H, to look at them, and they flip back when you let go. *(done; the table tracks which cards are face-up, which a later power-up needs)*
-- [ ] Show the winner and the winning hand at the end of each hand. *(not started: the winner only appears in the log lines; `_banner` stays empty after a hand. Needs the structured hand result from Phase 0.)*
+- [x] Your hole cards start face-down; hold the left mouse button on a card, or hold H, to look at them, and they flip back when you let go. *(done; the table tracks which cards are face-up, which a later power-up needs. Updated: holding either card now shows BOTH cards.)*
+- [x] Fix the card flip direction. *(done: `CardObject.FlipReversed` plus a `reverseFlip` tickbox on the `PokerTable3D` component, on by default. If it still looks backwards on your screen, untick the box. Needs a play-test.)*
+- [x] Show your current hand name ("High Card", "One Pair", "Flush", ...) in a banner below your name label. *(done in `PokerTable3D.cs`. It stays hidden until you have looked at your cards once this hand (hold a card or H); after that it shows even while the cards are face-down, and updates on every street and after a card swap. Before the flop it only says "One Pair" or "High Card". Needs a play-test.)*
+- [x] At showdown, name every remaining player's hand under their seat label. *(done, needs a play-test)*
+- [x] Show the winner and the winning hand at the end of each hand. *(done as a top banner, e.g. "You win 120 with Two Pair" or "Bot 2 wins 30 (everyone else folded)". It works out the winners from the chip change, so it is approximate. Replace it with the real hand result when the structured hand result item in Phase 0 is done. Needs a play-test.)*
 
 ### Phase 2: Power-up data model
 - [x] `Tier` enum (Common, Rare, Epic, Mythic, Legendary). *(done: `PowerUps/Core/Tier.cs`, with a Legendary-can't-upgrade check and `NextUp()`)*

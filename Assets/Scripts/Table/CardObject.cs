@@ -15,13 +15,23 @@ namespace HoldemTable
     {
         public const float Width = 0.7f, Height = 1.0f;
 
+        /// <summary>
+        /// Which way a card turns over. The turn is a rotation about the card's own X axis (its left-right line).
+        /// false: face-up = 0 degrees, so turning it up lifts the edge nearest the player.
+        /// true:  face-up = 360 degrees (same picture, opposite spin), so turning it up lifts the far edge instead.
+        /// The table's "reverseFlip" tickbox sets this.
+        /// </summary>
+        public static bool FlipReversed = true;
+        private static float UpAngle => FlipReversed ? 360f : 0f;
+        private const float DownAngle = 180f;
+
         public Card Card { get; private set; }
 
         /// <summary>True when the card is, or is on its way to being, face-up.</summary>
         public bool FaceUp => _destFaceUp;
 
         private Quaternion _yaw = Quaternion.identity;
-        private float _flip = 180f; // 0 = face up, 180 = face down
+        private float _flip = DownAngle; // UpAngle (0 or 360) = face up, 180 = face down
 
         // Where the current motion is heading. A new motion replaces the old one, so a flip that is
         // requested while the card is still flying simply redirects it instead of fighting with it.
@@ -109,7 +119,7 @@ namespace HoldemTable
             _destFaceUp = faceUp;
             transform.position = position;
             _yaw = yaw;
-            _flip = faceUp ? 0f : 180f;
+            _flip = faceUp ? UpAngle : DownAngle;
             Apply();
         }
 
@@ -128,7 +138,7 @@ namespace HoldemTable
             Vector3 p0 = transform.position;
             Quaternion y0 = _yaw;
             float f0 = _flip;
-            float f1 = faceUp ? 0f : 180f;
+            float f1 = faceUp ? UpAngle : DownAngle;
             float t = 0f;
             while (t < 1f)
             {
@@ -150,7 +160,7 @@ namespace HoldemTable
         /// <summary>Turns the card over where it is going to lie (or lies).</summary>
         public IEnumerator Flip(bool faceUp, float duration)
         {
-            return MoveTo(_destPos, _destYaw, faceUp, duration, 0.5f);
+            return MoveTo(_destPos, _destYaw, faceUp, duration, 0.6f);
         }
 
         /// <summary>Slides the card (face-down) to a spot, then removes it (used when a player folds).</summary>

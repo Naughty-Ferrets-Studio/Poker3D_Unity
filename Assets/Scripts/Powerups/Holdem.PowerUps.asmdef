@@ -1,0 +1,16 @@
+{
+    "name": "Holdem.PowerUps",
+    "rootNamespace": "Holdem.PowerUps",
+    "references": [
+        "Holdem"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": true
+}

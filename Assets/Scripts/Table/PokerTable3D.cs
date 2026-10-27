@@ -17,6 +17,7 @@ namespace HoldemTable
         [Range(2, 9)] public int seatCount = GameEngine.DefaultPlayers;
         public bool autoNextHand = true;
         public bool autoPlayHuman = false; // true: a bot also plays your seat (quick testing)
+        public bool reverseFlip = true;    // which way cards turn over; untick it if the turn looks backwards on your screen
 
         [Header("Timing (seconds)")]
         public float dealGap = 0.14f;      // pause between cards leaving the deck
@@ -58,13 +59,25 @@ namespace HoldemTable
         // looking at your cards: hold the left mouse button on a card, or hold H for both
         private CardObject _holdCard;
         private bool _holdKey;
+        private bool _lookedAtCards; // the hand-name banner stays hidden until you have looked at your cards once this hand
 
         private GUIStyle _label, _labelActive, _small, _bannerStyle, _button, _toggle;
         private float _styleScale;
 
+        // names for the hand-strength labels, and scratch lists so drawing them does not allocate every frame
+        private static readonly string[] HandLabels =
+        {
+            "High Card", "One Pair", "Two Pair", "Three of a Kind", "Straight",
+            "Flush", "Full House", "Four of a Kind", "Straight Flush", "Royal Flush"
+        };
+        private readonly List<Card> _tmpCards = new List<Card>(7);
+        private readonly List<Card> _tmpBoard = new List<Card>(5);
+        private Texture2D _boxTex;
+
         // ============================================================ setup
         private void Start()
         {
+            CardObject.FlipReversed = reverseFlip;
             BuildTable();
             SetupCamera();
             NewGame(seatCount);
@@ -182,6 +195,7 @@ namespace HoldemTable
             _banner = "Press \"Deal hand\"";
             _busy = false;
             _awaitHuman = false; _hasChoice = false;
+            _lookedAtCards = false;
             if (_dealerButton != null) _dealerButton.SetActive(false);
         }
 
@@ -227,7 +241,8 @@ namespace HoldemTable
             }
             while (autoNextHand && !_engine.IsGameOver);
 
-            _banner = _engine.IsGameOver ? "Game over - press \"New game\"" : "Press \"Deal hand\"";
+            if (_engine.IsGameOver) _banner = "Game over - press \"New game\"";
+            else if (_banner.Length == 0) _banner = "Press \"Deal hand\"";  // otherwise keep showing who won the last hand
             _busy = false;
         }
 
@@ -235,11 +250,15 @@ namespace HoldemTable
         {
             ClearCards();
             _banner = "";
+            _lookedAtCards = false;
+            int n = _engine.Players.Count;
+            var chipsBefore = new int[n]; // taken before the blinds go in, so "gain" = what the hand really won or lost
+            for (int i = 0; i < n; i++) chipsBefore[i] = _engine.Players[i].Chips;
+
             _engine.StartHand();
             _animated = 0;
             _burned = 0;
 
-            int n = _engine.Players.Count;
             var wasFolded = new bool[n];
             for (int i = 0; i < n; i++) wasFolded[i] = _engine.Players[i].Folded;
 
@@ -287,6 +306,48 @@ namespace HoldemTable
                 }
                 yield return new WaitForSeconds(0.7f);
             }
+
+            if (_engine.HandOver) _banner = ResultText(chipsBefore);
+        }
+
+        /// <summary>
+        /// "You win 120 with Two Pair" at the end of a hand. It works out the winners from the chip change,
+        /// until the engine reports a proper hand result.
+        /// </summary>
+        private string ResultText(int[] chipsBefore)
+        {
+            var winners = new List<int>();
+            for (int i = 0; i < chipsBefore.Length && i < _engine.Players.Count; i++)
+                if (_engine.Players[i].Chips - chipsBefore[i] > 0) winners.Add(i);
+            if (winners.Count == 0) return "Split pot";
+
+            var names = new List<string>();
+            foreach (int w in winners) names.Add(_engine.Players[w].IsHuman ? "You" : _engine.Players[w].Name);
+            string who = string.Join(" & ", names);
+
+            if (!_engine.ShowdownReached)
+                return who + (winners.Count == 1 && !_engine.Players[winners[0]].IsHuman ? " wins " : " win ")
+                       + (_engine.Players[winners[0]].Chips - chipsBefore[winners[0]]) + " (everyone else folded)";
+
+            string hand = HandLabel(_engine.Players[winners[0]].Hole, _engine.Community);
+            if (winners.Count > 1) return who + " split the pot with " + hand;
+            return who + (_engine.Players[winners[0]].IsHuman ? " win " : " wins ")
+                   + (_engine.Players[winners[0]].Chips - chipsBefore[winners[0]]) + " with " + hand;
+        }
+
+        /// <summary>
+        /// Name of the best hand you can make from these cards, like "One Pair" or "Flush".
+        /// With only the two hole cards (before the flop) it is "One Pair" or "High Card".
+        /// </summary>
+        private string HandLabel(IReadOnlyList<Card> hole, IReadOnlyList<Card> board)
+        {
+            _tmpCards.Clear();
+            _tmpCards.AddRange(hole);
+            _tmpCards.AddRange(board);
+            if (_tmpCards.Count < 2) return "";
+            if (_tmpCards.Count < 5)
+                return _tmpCards[0].Rank == _tmpCards[1].Rank ? HandLabels[1] : HandLabels[0];
+            return HandLabels[HandEvaluator.Category(HandEvaluator.Evaluate(_tmpCards))];
         }
 
         private void PlaceDealerButton()
@@ -480,9 +541,13 @@ namespace HoldemTable
                 string status = p.IsOut ? "OUT" : p.Folded ? "folded" : p.AllIn ? "ALL-IN" : (p.Bet > 0 ? "bet " + p.Bet : "");
                 string text = p.Name + "\n$" + p.Chips + (status.Length > 0 ? "\n" + status : "");
                 if (p.IsHuman && !p.Folded && !p.IsOut && !_engine.HandOver && i < _hole.Count && _hole[i].Count > 0)
-                    text += "\n(hold click on a card, or hold H, to look)";
+                    text += "\n(hold a card, or hold H, to see both)";
+                if (_engine.HandOver && _engine.ShowdownReached && !p.Folded && !p.IsOut && p.Hole.Count == 2)
+                    text += "\n" + HandLabel(p.Hole, _engine.Community); // cards are face-up at showdown, so name the hand
                 bool active = !_engine.HandOver && i == _engine.Current;
-                float w = 150f * k, h = 64f * k;
+                int textLines = 1;
+                for (int ci = 0; ci < text.Length; ci++) if (text[ci] == '\n') textLines++;
+                float w = 190f * k, h = Mathf.Max(64f, textLines * 19f) * k;
                 ShadowLabel(new Rect(sp.x - w / 2f, Screen.height - sp.y - h / 2f, w, h), text, active ? _labelActive : _label);
             }
 
@@ -496,6 +561,28 @@ namespace HoldemTable
                     float w = 220f * k, h = 40f * k;
                     ShadowLabel(new Rect(sp.x - w / 2f, Screen.height - sp.y - h / 2f, w, h),
                                 "Pot $" + _engine.Pot + "   (" + street + ")", _label);
+                }
+            }
+
+            // your current hand, shown above your cards even while they are face-down
+            int me = HumanSeat();
+            if (me >= 0 && me < _hole.Count && me < _seatPos.Length && !_engine.HandOver)
+            {
+                Player mp = _engine.Players[me];
+                if (_lookedAtCards && !mp.IsOut && !mp.Folded && mp.Hole.Count == 2 && _hole[me].Count == 2)
+                {
+                    _tmpBoard.Clear();
+                    foreach (CardObject bc in _board) if (bc != null) _tmpBoard.Add(bc.Card);
+                    // just below your name label, which sits under your cards
+                    Vector3 bsp = _cam.WorldToScreenPoint(_seatPos[me] + _seatYaw[me] * new Vector3(0f, 0f, -1.05f));
+                    if (bsp.z > 0f)
+                    {
+                        float bw2 = 340f * k, bh2 = 40f * k;
+                        float top = Screen.height - bsp.y + 46f * k;        // label centre + half the label height + a small gap
+                        top = Mathf.Min(top, Screen.height - bh2 - 8f * k); // never off the bottom of the screen
+                        DrawHandBanner(new Rect(bsp.x - bw2 / 2f, top, bw2, bh2),
+                                       "Your hand: " + HandLabel(mp.Hole, _tmpBoard));
+                    }
                 }
             }
 
@@ -555,6 +642,22 @@ namespace HoldemTable
             else if (ev.rawType == EventType.KeyUp && ev.keyCode == KeyCode.H) _holdKey = false;
         }
 
+        /// <summary>A dark, see-through ribbon with white text.</summary>
+        private void DrawHandBanner(Rect r, string text)
+        {
+            if (_boxTex == null)
+            {
+                _boxTex = new Texture2D(1, 1);
+                _boxTex.SetPixel(0, 0, Color.white);
+                _boxTex.Apply();
+            }
+            Color old = GUI.color;
+            GUI.color = new Color(0f, 0f, 0f, 0.65f);
+            GUI.DrawTexture(r, _boxTex);
+            GUI.color = old;
+            ShadowLabel(r, text, _bannerStyle);
+        }
+
         private void OnApplicationFocus(bool focus)
         {
             if (!focus) { _holdCard = null; _holdKey = false; } // never get stuck "holding" after alt-tab
@@ -562,15 +665,18 @@ namespace HoldemTable
 
         private void Update()
         {
+            CardObject.FlipReversed = reverseFlip;
             if (_engine == null) return;
             if (_engine.HandOver && _engine.ShowdownReached) return; // showdown turns the cards over by itself
 
             int seat = HumanSeat();
             if (seat < 0 || seat >= _hole.Count) return;
+            if (!_lookedAtCards && (_holdKey || _holdCard != null) && _hole[seat].Count == 2)
+                _lookedAtCards = true; // from now on the banner names your hand, even when the cards are face-down again
             foreach (CardObject c in _hole[seat])
             {
                 if (c == null) continue;
-                bool want = _holdKey || c == _holdCard; // face-up only while held
+                bool want = _holdKey || _holdCard != null; // holding either card (or H) shows BOTH, and only while held
                 if (c.FaceUp != want) c.StartCoroutine(c.Flip(want, 0.2f));
             }
         }
