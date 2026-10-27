@@ -5,12 +5,13 @@ namespace Holdem.PowerUps
     /// <summary>
     /// The Dice. Roll a die to redraw one community card, only when all five are on the table.
     ///   1-3: flop card 1-3.  4: turn.  5: river.  6: your choice (req.CardIndex 0-4, board order).
-    /// No tier changes yet (the design has no variants); every tier works the same.
+    /// One version only, at Legendary.
     /// </summary>
     public sealed class Dice : PowerUpDefinition
     {
         public override string Id => "dice";
         public override string Name => "The Dice";
+        public override Tier[] Tiers => new[] { Tier.Legendary };
 
         public override string Describe(Tier tier) =>
             "Roll a die to redraw a community card (1-3 flop, 4 turn, 5 river, 6 your choice). Needs all 5 community cards.";

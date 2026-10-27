@@ -6,9 +6,9 @@ namespace Holdem.PowerUps
 {
     /// <summary>
     /// Bumba Card. Swap one of your hole cards (req.CardIndex 0 or 1) for a card from the deck.
-    ///   Common: the top card (random).
-    ///   Rare:   a random card of the suit you name (req.ChosenSuit).
-    ///   Epic and up: the exact card you name (req.ChosenCard). If it is not in the deck, nothing happens and it is not spent.
+    ///   Bumba Card I   (Rare):   the top card (random).
+    ///   Bumba Card II  (Epic):   a random card of the suit you name (req.ChosenSuit).
+    ///   Bumba Card III (Mythic): the exact card you name (req.ChosenCard). If it is not in the deck, nothing happens and it is not spent.
     /// Not built yet: the "sit on the card and swap later" step, and the accusation / catch rules (they need UI).
     /// The swapped-out card goes back into the deck at a random depth (the engine's rule for every swap).
     /// </summary>
@@ -16,11 +16,12 @@ namespace Holdem.PowerUps
     {
         public override string Id => "bumba";
         public override string Name => "Bumba Card";
+        public override Tier[] Tiers => new[] { Tier.Rare, Tier.Epic, Tier.Mythic };
 
         public override string Describe(Tier tier)
         {
-            if (tier == Tier.Common) return "Swap one of your cards for a random card from the deck.";
-            if (tier == Tier.Rare) return "Swap one of your cards for a random card of a suit you choose.";
+            if (tier == Tier.Rare) return "Swap one of your cards for a random card from the deck.";
+            if (tier == Tier.Epic) return "Swap one of your cards for a random card of a suit you choose.";
             return "Swap one of your cards for the exact card you choose (if it is in the deck).";
         }
 
@@ -33,14 +34,14 @@ namespace Holdem.PowerUps
             var old = me.Hole[req.CardIndex];
 
             Card? wanted = null;
-            if (ctx.Tier == Tier.Rare)
+            if (ctx.Tier == Tier.Epic)
             {
                 if (!req.ChosenSuit.HasValue) return UseResult.Fail("Pick a suit.");
                 List<Card> pool = ctx.Engine.DeckCards.Where(c => c.Suit == req.ChosenSuit.Value).ToList();
                 if (pool.Count == 0) return UseResult.Fail("No " + req.ChosenSuit.Value + " left in the deck. Not spent.");
                 wanted = pool[ctx.NextInt(pool.Count)];
             }
-            else if (ctx.Tier >= Tier.Epic)
+            else if (ctx.Tier == Tier.Mythic)
             {
                 if (!req.ChosenCard.HasValue) return UseResult.Fail("Pick a card.");
                 if (!ctx.Engine.DeckCards.Contains(req.ChosenCard.Value)) return UseResult.Fail(req.ChosenCard.Value + " is not in the deck. Not spent.");

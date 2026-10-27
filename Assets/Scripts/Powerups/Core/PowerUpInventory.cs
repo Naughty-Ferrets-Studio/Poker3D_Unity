@@ -48,9 +48,9 @@ namespace Holdem.PowerUps
 
         public void Clear() => _items.Clear();
 
-        /// <summary>Same power-up and same tier, and not Legendary.</summary>
+        /// <summary>Same power-up, same tier, and a higher version exists (Bumba Card I + I = II).</summary>
         public static bool CanMerge(PowerUpInstance a, PowerUpInstance b) =>
-            a != null && b != null && a != b && a.Definition == b.Definition && a.Tier == b.Tier && a.Tier.CanUpgrade();
+            a != null && b != null && a != b && a.Definition == b.Definition && a.Tier == b.Tier && a.Definition.NextTier(a.Tier).HasValue;
 
         /// <summary>Held item at index that would merge with 'incoming', or -1. Merging never needs a free slot.</summary>
         public int FindMergePartner(PowerUpInstance incoming)
@@ -65,7 +65,7 @@ namespace Holdem.PowerUps
         {
             Check(i); Check(j);
             if (i == j || !CanMerge(_items[i], _items[j])) throw new InvalidOperationException("These two cannot be merged.");
-            var up = new PowerUpInstance(_items[i].Definition, _items[i].Tier.NextUp());
+            var up = new PowerUpInstance(_items[i].Definition, _items[i].Definition.NextTier(_items[i].Tier).Value);
             int hi = Math.Max(i, j), lo = Math.Min(i, j);
             _items.RemoveAt(hi);
             _items[lo] = up;
@@ -77,7 +77,7 @@ namespace Holdem.PowerUps
         {
             Check(heldIndex);
             if (!CanMerge(_items[heldIndex], incoming)) throw new InvalidOperationException("These two cannot be merged.");
-            var up = new PowerUpInstance(incoming.Definition, incoming.Tier.NextUp());
+            var up = new PowerUpInstance(incoming.Definition, incoming.Definition.NextTier(incoming.Tier).Value);
             _items[heldIndex] = up;
             return up;
         }

@@ -53,7 +53,33 @@ namespace Holdem.PowerUps
         /// <summary>Stable id, used by saves, tests and the dev panel. Never change it after release.</summary>
         public abstract string Id { get; }
         public abstract string Name { get; }
-        /// <summary>One line for the UI: what this power-up does at this tier.</summary>
+
+        /// <summary>
+        /// The tiers this power-up exists at, lowest first. Each entry is one version (I, II, III) fixed to that tier.
+        /// Example: Bumba Card = { Rare, Epic, Mythic } means Bumba Card I is Rare, II is Epic, III is Mythic.
+        /// </summary>
+        public abstract Tier[] Tiers { get; }
+
+        public bool HasTier(Tier t) => System.Array.IndexOf(Tiers, t) >= 0;
+
+        /// <summary>1-based version number at that tier (Bumba Card II = 2).</summary>
+        public int Version(Tier t) => System.Array.IndexOf(Tiers, t) + 1;
+
+        /// <summary>The next version up (what two merged copies become), or null if this is the last version.</summary>
+        public Tier? NextTier(Tier t)
+        {
+            int i = System.Array.IndexOf(Tiers, t);
+            return i >= 0 && i + 1 < Tiers.Length ? Tiers[i + 1] : (Tier?)null;
+        }
+
+        /// <summary>"Bumba Card II", or just "The Dice" when there is only one version.</summary>
+        public string VersionName(Tier t)
+        {
+            if (Tiers.Length == 1) return Name;
+            string[] roman = { "I", "II", "III", "IV", "V" };
+            return Name + " " + roman[Version(t) - 1];
+        }
+        /// <summary>One line for the UI: what this version does. Only called with a tier from Tiers.</summary>
         public abstract string Describe(Tier tier);
         /// <summary>Extra weight when the award picks a random power-up (1 = equal chance).</summary>
         public virtual int Weight => 1;

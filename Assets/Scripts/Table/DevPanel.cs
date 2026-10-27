@@ -17,7 +17,7 @@ namespace HoldemTable
         private bool _open;
 
         private int _pu;            // index in PowerUpRegistry.All
-        private int _tier;          // Tier as int
+        private int _tier;          // index into the chosen power-up's Tiers
         private int _target = 1;    // target seat
         private int _cardIndex;     // hole or board card index
         private int _suit;          // Suit as int
@@ -27,7 +27,6 @@ namespace HoldemTable
         private Vector2 _scroll;
 
         private static readonly string[] SuitNames = { "Clubs", "Diamonds", "Hearts", "Spades" };
-        private static readonly string[] TierNames = { "Common", "Rare", "Epic", "Mythic", "Legendary" };
         private static readonly string[] RollNames = { "Real", "1", "2", "3", "4", "5", "6" };
 
         private void Awake() { _table = GetComponent<PokerTable3D>(); }
@@ -63,13 +62,16 @@ namespace HoldemTable
             var names = new List<string>();
             foreach (var d in PowerUpRegistry.All) names.Add(d.Name);
             _pu = GUILayout.SelectionGrid(Mathf.Clamp(_pu, 0, names.Count - 1), names.ToArray(), 2);
-            GUILayout.Label("2. Pick a tier");
-            _tier = GUILayout.SelectionGrid(_tier, TierNames, 3);
             PowerUpDefinition def = PowerUpRegistry.All[_pu];
-            GUILayout.Label(def.Describe((Tier)_tier));
+            GUILayout.Label("2. Pick a version");
+            var versions = new List<string>();
+            foreach (Tier t in def.Tiers) versions.Add(def.VersionName(t) + " (" + t + ")");
+            _tier = GUILayout.SelectionGrid(Mathf.Clamp(_tier, 0, versions.Count - 1), versions.ToArray(), 1);
+            Tier tier = def.Tiers[_tier];
+            GUILayout.Label(def.Describe(tier));
 
             if (GUILayout.Button("Give to me"))
-                _message = sys.Give(me, def.Id, (Tier)_tier) ? "Gave " + def.Name + " (" + (Tier)_tier + ")." : "Your inventory is full (max " + PowerUpInventory.MaxSlots + ").";
+                _message = sys.Give(me, def.Id, tier) ? "Gave " + def.VersionName(tier) + " (" + tier + ")." : "Your inventory is full (max " + PowerUpInventory.MaxSlots + ").";
             if (GUILayout.Button("Clear my power-ups")) { sys.Inventory(me).Clear(); _message = "Cleared."; }
             sys.IgnoreTiming = GUILayout.Toggle(sys.IgnoreTiming, " Ignore timing (use any turn, any street)");
 
@@ -96,10 +98,10 @@ namespace HoldemTable
             if (items.Count == 0) GUILayout.Label("(none)");
             foreach (PowerUpInstance item in items)
             {
-                GUILayout.Label(item.ToString());
+                GUILayout.Label(item.ToString() + " - " + item.Description);
                 string why = sys.CanUse(me, item);
                 if (why != null) GUILayout.Label("   can't use now: " + why);
-                if (GUILayout.Button("Use " + item.Definition.Name))
+                if (GUILayout.Button("Use " + item.Definition.VersionName(item.Tier)))
                 {
                     UseResult res = sys.Use(me, item, BuildRequest());
                     _message = (res.Ok ? "OK: " : "No: ") + res.Message;

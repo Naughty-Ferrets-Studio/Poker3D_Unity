@@ -13,10 +13,10 @@ namespace Holdem.Tests
         public void Add_StopsAtThree_ThenReportsFull()
         {
             var inv = new PowerUpInventory();
-            Assert.AreEqual(AddResult.Added, inv.TryAdd(P("xray", Tier.Common)));
-            Assert.AreEqual(AddResult.Added, inv.TryAdd(P("dice", Tier.Common)));
-            Assert.AreEqual(AddResult.Added, inv.TryAdd(P("bumba", Tier.Common)));
-            Assert.AreEqual(AddResult.Full, inv.TryAdd(P("xray", Tier.Rare)));
+            Assert.AreEqual(AddResult.Added, inv.TryAdd(P("xray", Tier.Epic)));
+            Assert.AreEqual(AddResult.Added, inv.TryAdd(P("dice", Tier.Legendary)));
+            Assert.AreEqual(AddResult.Added, inv.TryAdd(P("bumba", Tier.Rare)));
+            Assert.AreEqual(AddResult.Full, inv.TryAdd(P("xray", Tier.Mythic)));
             Assert.AreEqual(3, inv.Count);
         }
 
@@ -24,8 +24,8 @@ namespace Holdem.Tests
         public void Full_ReplaceAt_KeepsTheNewOneAndDropsTheOld()
         {
             var inv = new PowerUpInventory();
-            inv.TryAdd(P("xray", Tier.Common)); inv.TryAdd(P("dice", Tier.Common)); inv.TryAdd(P("bumba", Tier.Common));
-            var incoming = P("xray", Tier.Epic);
+            inv.TryAdd(P("xray", Tier.Epic)); inv.TryAdd(P("dice", Tier.Legendary)); inv.TryAdd(P("bumba", Tier.Rare));
+            var incoming = P("xray", Tier.Mythic);
             var dropped = inv.ReplaceAt(1, incoming);
             Assert.AreEqual("dice", dropped.Definition.Id);
             Assert.AreEqual(3, inv.Count);
@@ -33,45 +33,65 @@ namespace Holdem.Tests
         }
 
         [Test]
-        public void MergeHeld_TwoSameTier_BecomesOneAtNextTier()
+        public void MergeHeld_TwoSameVersion_BecomesTheNextVersion()
         {
             var inv = new PowerUpInventory();
-            inv.TryAdd(P("xray", Tier.Rare)); inv.TryAdd(P("dice", Tier.Rare)); inv.TryAdd(P("xray", Tier.Rare));
+            inv.TryAdd(P("bumba", Tier.Rare)); inv.TryAdd(P("dice", Tier.Legendary)); inv.TryAdd(P("bumba", Tier.Rare));
             var up = inv.MergeHeld(0, 2);
-            Assert.AreEqual(Tier.Epic, up.Tier);
+            Assert.AreEqual(Tier.Epic, up.Tier);   // Bumba Card I + I = Bumba Card II
             Assert.AreEqual(2, inv.Count);
-            Assert.AreEqual("xray", inv.Items[0].Definition.Id);
+            Assert.AreEqual("bumba", inv.Items[0].Definition.Id);
         }
 
         [Test]
         public void MergeIncoming_WorksWhenFull()
         {
             var inv = new PowerUpInventory();
-            inv.TryAdd(P("xray", Tier.Common)); inv.TryAdd(P("dice", Tier.Common)); inv.TryAdd(P("bumba", Tier.Common));
-            var incoming = P("dice", Tier.Common);
+            inv.TryAdd(P("xray", Tier.Epic)); inv.TryAdd(P("dice", Tier.Legendary)); inv.TryAdd(P("bumba", Tier.Rare));
+            var incoming = P("bumba", Tier.Rare);
             int i = inv.FindMergePartner(incoming);
-            Assert.AreEqual(1, i);
+            Assert.AreEqual(2, i);
             var up = inv.MergeIncoming(i, incoming);
-            Assert.AreEqual(Tier.Rare, up.Tier);
+            Assert.AreEqual(Tier.Epic, up.Tier);
             Assert.AreEqual(3, inv.Count);
         }
 
         [Test]
-        public void Merge_NeedsSamePowerUpAndSameTier_AndLegendaryRefuses()
+        public void Merge_NeedsSamePowerUpAndSameTier_AndTheLastVersionRefuses()
         {
-            Assert.IsFalse(PowerUpInventory.CanMerge(P("xray", Tier.Rare), P("dice", Tier.Rare)));
-            Assert.IsFalse(PowerUpInventory.CanMerge(P("xray", Tier.Rare), P("xray", Tier.Epic)));
-            Assert.IsFalse(PowerUpInventory.CanMerge(P("xray", Tier.Legendary), P("xray", Tier.Legendary)));
-            Assert.IsTrue(PowerUpInventory.CanMerge(P("xray", Tier.Mythic), P("xray", Tier.Mythic)));
+            Assert.IsFalse(PowerUpInventory.CanMerge(P("bumba", Tier.Rare), P("xray", Tier.Epic)));      // different power-ups
+            Assert.IsFalse(PowerUpInventory.CanMerge(P("bumba", Tier.Rare), P("bumba", Tier.Epic)));     // different versions
+            Assert.IsFalse(PowerUpInventory.CanMerge(P("dice", Tier.Legendary), P("dice", Tier.Legendary))); // only one version
+            Assert.IsFalse(PowerUpInventory.CanMerge(P("xray", Tier.Mythic), P("xray", Tier.Mythic)));   // X-Ray II is the last version
+            Assert.IsTrue(PowerUpInventory.CanMerge(P("bumba", Tier.Epic), P("bumba", Tier.Epic)));      // II + II = III
         }
 
         [Test]
-        public void Registry_IdsAreUnique_AndEveryTierHasADescription()
+        public void AnInstanceCannotExistAtATierItDoesNotHave()
+        {
+            Assert.Throws<ArgumentException>(() => P("dice", Tier.Common));
+            Assert.Throws<ArgumentException>(() => P("xray", Tier.Rare));
+        }
+
+        [Test]
+        public void Registry_IdsAreUnique_AndEveryVersionHasADescription()
         {
             Assert.AreEqual(PowerUpRegistry.All.Count, PowerUpRegistry.All.Select(d => d.Id).Distinct().Count());
             foreach (var d in PowerUpRegistry.All)
-                for (int t = 0; t < TierExtensions.Count; t++)
-                    Assert.IsTrue(d.Describe((Tier)t).Length > 0, d.Id + " tier " + t);
+                foreach (Tier t in d.Tiers)
+                    Assert.IsTrue(d.Describe(t).Length > 0, d.Id + " " + t);
+        }
+
+        [Test]
+        public void Award_PicksAPowerUpThatReallyExistsAtTheRolledTier()
+        {
+            Assert.AreEqual("dice", PowerUpRegistry.PickForTier(Tier.Legendary, n => 0).Id);
+            Assert.AreEqual("bumba", PowerUpRegistry.PickForTier(Tier.Rare, n => 0).Id);
+            for (int i = 0; i < 50; i++)
+            {
+                var d = PowerUpRegistry.PickForTier(Tier.Epic, TestUtil.Seeded(i));
+                Assert.IsTrue(d.HasTier(Tier.Epic));
+            }
         }
     }
 
@@ -109,10 +129,10 @@ namespace Holdem.Tests
 
         // ---------------------------------------------------------------- X-Ray
         [Test]
-        public void XRay_Common_ShowsOneCardOfTheTarget_AndIsSpent()
+        public void XRay_I_ShowsOneCardOfTheTarget_AndIsSpent()
         {
             var e = NewHand(); int me = e.Current; int target = (me + 1) % 3;
-            var (sys, item) = Give(e, me, "xray", Tier.Common);
+            var (sys, item) = Give(e, me, "xray", Tier.Epic);
             var r = sys.Use(me, item, new UseRequest { TargetSeat = target });
             Assert.IsTrue(r.Ok, r.Message);
             Assert.AreEqual(1, r.Secret.Count);
@@ -122,10 +142,10 @@ namespace Holdem.Tests
         }
 
         [Test]
-        public void XRay_Rare_ShowsBothCards()
+        public void XRay_II_ShowsBothCards()
         {
             var e = NewHand(); int me = e.Current; int target = (me + 2) % 3;
-            var (sys, item) = Give(e, me, "xray", Tier.Rare);
+            var (sys, item) = Give(e, me, "xray", Tier.Mythic);
             var r = sys.Use(me, item, new UseRequest { TargetSeat = target });
             Assert.IsTrue(r.Ok, r.Message);
             CollectionAssert.AreEquivalent(e.Players[target].Hole, r.Secret);
@@ -135,7 +155,7 @@ namespace Holdem.Tests
         public void XRay_OnlyOnYourTurn_UnlessDevModeIgnoresTiming()
         {
             var e = NewHand(); int notMe = (e.Current + 1) % 3; int target = (e.Current + 2) % 3;
-            var (sys, item) = Give(e, notMe, "xray", Tier.Common);
+            var (sys, item) = Give(e, notMe, "xray", Tier.Epic);
             var r = sys.Use(notMe, item, new UseRequest { TargetSeat = target });
             Assert.IsFalse(r.Ok);
             Assert.AreEqual(1, sys.Inventory(notMe).Count); // not spent
@@ -147,7 +167,7 @@ namespace Holdem.Tests
         public void XRay_RefusesSelfAndFoldedTargets_WithoutSpendingIt()
         {
             var e = NewHand(); int me = e.Current; int target = (me + 1) % 3;
-            var (sys, item) = Give(e, me, "xray", Tier.Common);
+            var (sys, item) = Give(e, me, "xray", Tier.Epic);
             Assert.IsFalse(sys.Use(me, item, new UseRequest { TargetSeat = me }).Ok);
             Assert.IsFalse(sys.Use(me, item, new UseRequest { TargetSeat = -1 }).Ok);
             e.Players[target].Folded = true;
@@ -159,7 +179,7 @@ namespace Holdem.Tests
         public void XRay_EmitsARevealEventOnlyTheUserSees()
         {
             var e = NewHand(); int me = e.Current; int target = (me + 1) % 3;
-            var (sys, item) = Give(e, me, "xray", Tier.Rare);
+            var (sys, item) = Give(e, me, "xray", Tier.Mythic);
             sys.Use(me, item, new UseRequest { TargetSeat = target });
             var ev = e.DealEvents.Where(x => x.Kind == DealKind.Reveal).ToList();
             Assert.AreEqual(2, ev.Count);
@@ -172,7 +192,7 @@ namespace Holdem.Tests
         {
             var e = NewHand(); ToStreet(e, 4);
             int me = e.Current;
-            var (sys, item) = Give(e, me, "dice", Tier.Common);
+            var (sys, item) = Give(e, me, "dice", Tier.Legendary);
             Assert.IsFalse(sys.Use(me, item, UseRequest.None).Ok);
             Assert.AreEqual(1, sys.Inventory(me).Count);
         }
@@ -185,7 +205,7 @@ namespace Holdem.Tests
             {
                 var e = NewHand(); ToStreet(e, 5);
                 int me = e.Current;
-                var (sys, item) = Give(e, me, "dice", Tier.Common);
+                var (sys, item) = Give(e, me, "dice", Tier.Legendary);
                 var before = e.Community.ToList();
                 var top = e.DeckCards.Last();
                 var r = sys.Use(me, item, new UseRequest { ForcedRoll = roll });
@@ -203,7 +223,7 @@ namespace Holdem.Tests
         {
             var e = NewHand(); ToStreet(e, 5);
             int me = e.Current;
-            var (sys, item) = Give(e, me, "dice", Tier.Common);
+            var (sys, item) = Give(e, me, "dice", Tier.Legendary);
             var before = e.Community.ToList();
             var r = sys.Use(me, item, new UseRequest { ForcedRoll = 6, CardIndex = 2 });
             Assert.IsTrue(r.Ok, r.Message);
@@ -216,7 +236,7 @@ namespace Holdem.Tests
         {
             var e = NewHand(); ToStreet(e, 5);
             int me = e.Current;
-            var (sys, item) = Give(e, me, "dice", Tier.Common);
+            var (sys, item) = Give(e, me, "dice", Tier.Legendary);
             var before = e.Community.ToList();
             Assert.IsTrue(sys.Use(me, item, new UseRequest { CardIndex = 0 }).Ok);
             int changed = Enumerable.Range(0, 5).Count(k => before[k] != e.Community[k]);
@@ -225,10 +245,10 @@ namespace Holdem.Tests
 
         // ---------------------------------------------------------------- Bumba Card
         [Test]
-        public void Bumba_Common_TakesTheTopCard()
+        public void Bumba_I_TakesTheTopCard()
         {
             var e = NewHand(); int me = e.Current;
-            var (sys, item) = Give(e, me, "bumba", Tier.Common);
+            var (sys, item) = Give(e, me, "bumba", Tier.Rare);
             var top = e.DeckCards.Last(); var old = e.Players[me].Hole[1];
             var r = sys.Use(me, item, new UseRequest { CardIndex = 1 });
             Assert.IsTrue(r.Ok, r.Message);
@@ -238,10 +258,10 @@ namespace Holdem.Tests
         }
 
         [Test]
-        public void Bumba_Rare_GivesACardOfTheChosenSuit()
+        public void Bumba_II_GivesACardOfTheChosenSuit()
         {
             var e = NewHand(); int me = e.Current;
-            var (sys, item) = Give(e, me, "bumba", Tier.Rare);
+            var (sys, item) = Give(e, me, "bumba", Tier.Epic);
             var r = sys.Use(me, item, new UseRequest { CardIndex = 0, ChosenSuit = Suit.Hearts });
             Assert.IsTrue(r.Ok, r.Message);
             Assert.AreEqual(Suit.Hearts, e.Players[me].Hole[0].Suit);
@@ -249,10 +269,10 @@ namespace Holdem.Tests
         }
 
         [Test]
-        public void Bumba_Epic_GivesTheExactCard_OrFailsWithoutSpending()
+        public void Bumba_III_GivesTheExactCard_OrFailsWithoutSpending()
         {
             var e = NewHand(); int me = e.Current;
-            var (sys, item) = Give(e, me, "bumba", Tier.Epic);
+            var (sys, item) = Give(e, me, "bumba", Tier.Mythic);
             Card inDeck = e.DeckCards[10];
             Card heldByAnother = e.Players[(me + 1) % 3].Hole[0];
 
@@ -267,23 +287,13 @@ namespace Holdem.Tests
             FinishHand(e);
         }
 
-        [Test]
-        public void Bumba_Legendary_BehavesLikeEpic()
-        {
-            var e = NewHand(); int me = e.Current;
-            var (sys, item) = Give(e, me, "bumba", Tier.Legendary);
-            Card inDeck = e.DeckCards[5];
-            Assert.IsTrue(sys.Use(me, item, new UseRequest { CardIndex = 1, ChosenCard = inDeck }).Ok);
-            Assert.AreEqual(inDeck, e.Players[me].Hole[1]);
-        }
-
         // ---------------------------------------------------------------- general
         [Test]
         public void NothingCanBeUsedOutsideAHand_OrAfterFolding()
         {
             var e = new GameEngine(); e.NewGame(2);
             var sys = new PowerUpSystem(e);
-            sys.Give(0, "bumba", Tier.Common);
+            sys.Give(0, "bumba", Tier.Rare);
             Assert.IsFalse(sys.Use(0, sys.Inventory(0).Items[0], new UseRequest { CardIndex = 0 }).Ok);
 
             e.StartHand();
@@ -295,7 +305,7 @@ namespace Holdem.Tests
         public void UsingTheSameItemTwice_OnlyWorksOnce()
         {
             var e = NewHand(); int me = e.Current;
-            var (sys, item) = Give(e, me, "bumba", Tier.Common);
+            var (sys, item) = Give(e, me, "bumba", Tier.Rare);
             Assert.IsTrue(sys.Use(me, item, new UseRequest { CardIndex = 0 }).Ok);
             Assert.IsFalse(sys.Use(me, item, new UseRequest { CardIndex = 0 }).Ok);
         }
