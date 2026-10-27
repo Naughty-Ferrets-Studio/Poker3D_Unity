@@ -35,6 +35,9 @@ public class GameEngine
     /// <summary>Every card movement of the current hand, in order (burns, hole cards, board). Use it to drive 3D animation.</summary>
     public IReadOnlyList<DealEvent> DealEvents => _dealer.Events;
 
+    /// <summary>Cards still in the deck. For power-ups only; never show this to players.</summary>
+    public IReadOnlyList<Card> DeckCards => _dealer.DeckCards;
+
     /// <summary>Shuffled order of the current hand's deck. Save it to replay the hand exactly.</summary>
     public IReadOnlyList<Card> DeckOrder => _dealer.DeckOrder;
 

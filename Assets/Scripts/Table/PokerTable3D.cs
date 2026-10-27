@@ -2,6 +2,7 @@ using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 using Holdem;
+using Holdem.PowerUps;
 
 namespace HoldemTable
 {
@@ -37,6 +38,14 @@ namespace HoldemTable
 
         // ------------------------------------------------------------ state
         private GameEngine _engine;
+        private PowerUpSystem _powerUps;
+
+        /// <summary>The running game (for the dev panel and the future power-up UI).</summary>
+        public GameEngine Engine => _engine;
+        /// <summary>Every player's power-up inventory and the Use() entry point.</summary>
+        public PowerUpSystem PowerUps => _powerUps;
+        /// <summary>Which seat is you (-1 if none).</summary>
+        public int MySeat => _engine == null ? -1 : HumanSeat();
         private readonly System.Random _rng = new System.Random();
         private readonly List<CardObject> _all = new List<CardObject>();
         private readonly List<List<CardObject>> _hole = new List<List<CardObject>>();
@@ -81,6 +90,7 @@ namespace HoldemTable
             BuildTable();
             SetupCamera();
             NewGame(seatCount);
+            if (GetComponent<DevPanel>() == null) gameObject.AddComponent<DevPanel>();
             StartCoroutine(Run());
         }
 
@@ -185,6 +195,8 @@ namespace HoldemTable
             _engine = new GameEngine();
             _engine.NewGame(seatCount - 1);
             _engine.Logged += OnLog;
+            bool keepIgnore = _powerUps != null && _powerUps.IgnoreTiming;
+            _powerUps = new PowerUpSystem(_engine) { IgnoreTiming = keepIgnore };
 
             LayoutSeats(seatCount);
             _hole.Clear();
@@ -275,7 +287,12 @@ namespace HoldemTable
                     _raiseTo = _engine.MinRaiseTo;
                     _hasChoice = false;
                     _awaitHuman = true;
-                    while (!_hasChoice) yield return null;
+                    while (!_hasChoice)
+                    {
+                        // a power-up used while you think (swap, reveal...) plays its animation right away
+                        if (_animated < _engine.DealEvents.Count) yield return StartCoroutine(PlayNewEvents());
+                        yield return null;
+                    }
                     _awaitHuman = false;
 
                     ActResult res = _engine.TryAct(_engine.Current, _choiceAction, _choiceRaiseTo);

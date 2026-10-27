@@ -61,6 +61,9 @@ public sealed class CardDealer
     public IReadOnlyList<DealEvent> Events => _events;
     public IReadOnlyList<Card> Burned => _burned;
 
+    /// <summary>Cards still in the deck, bottom to top. For power-ups only (never show this to players).</summary>
+    public IReadOnlyList<Card> DeckCards => _deck.RemainingCards;
+
     /// <summary>Save this per hand; feed it to ReplayHand(new Deck(order)) to reproduce the hand exactly (if no power-up changed a card).</summary>
     public IReadOnlyList<Card> DeckOrder => _deck?.InitialOrder;
 
