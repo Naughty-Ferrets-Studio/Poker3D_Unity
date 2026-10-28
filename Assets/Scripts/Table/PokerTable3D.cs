@@ -44,6 +44,23 @@ namespace HoldemTable
         public GameEngine Engine => _engine;
         /// <summary>Every player's power-up inventory and the Use() entry point.</summary>
         public PowerUpSystem PowerUps => _powerUps;
+        /// <summary>The running table (set when the scene starts). The dev window uses this instead of searching the scene.</summary>
+        public static PokerTable3D Current { get; private set; }
+        private void OnEnable() { Current = this; }
+        private void OnDisable() { if (Current == this) Current = null; }
+
+        /// <summary>True while a hand is being played.</summary>
+        public bool IsBusy => _busy;
+        /// <summary>Dev mode: start a hand now (same as pressing Deal hand). False if one is already running.</summary>
+        public bool DevDealNow()
+        {
+            if (_busy || _engine == null || _engine.IsGameOver) return false;
+            StartCoroutine(Run());
+            return true;
+        }
+        /// <summary>Dev mode: you and the bots check / call until this many board cards are out (3 = flop, 4 = turn, 5 = river), then play resumes normally. 0 = off.</summary>
+        public void DevSkipToBoard(int cards) { _devSkipBoard = Mathf.Clamp(cards, 0, 5); }
+
         /// <summary>Which seat is you (-1 if none).</summary>
         public int MySeat => _engine == null ? -1 : HumanSeat();
         private readonly System.Random _rng = new System.Random();
@@ -61,6 +78,7 @@ namespace HoldemTable
 
         // your turn: the buttons set these, PlayHand picks them up
         private bool _awaitHuman, _hasChoice;
+        private int _devSkipBoard; // dev mode: auto check/call until this many board cards are out (0 = off)
         private PlayerAction _choiceAction;
         private int _choiceRaiseTo;
         private float _raiseTo;
@@ -205,7 +223,7 @@ namespace HoldemTable
             _log.Clear();
             _banner = "Press \"Deal hand\"";
             _busy = false;
-            _awaitHuman = false; _hasChoice = false;
+            _awaitHuman = false; _hasChoice = false; _devSkipBoard = 0;
             _lookedAtCards = false;
             if (_dealerButton != null) _dealerButton.SetActive(false);
         }
@@ -288,6 +306,7 @@ namespace HoldemTable
                     _awaitHuman = true;
                     while (!_hasChoice)
                     {
+                        if (_devSkipBoard > _engine.Community.Count) Submit(PlayerAction.CheckCall, 0);
                         // a power-up used while you think (swap, reveal...) plays its animation right away
                         if (_animated < _engine.DealEvents.Count) yield return StartCoroutine(PlayNewEvents());
                         yield return null;
@@ -304,7 +323,7 @@ namespace HoldemTable
                 }
                 else
                 {
-                    yield return new WaitForSeconds(thinkTime);
+                    yield return new WaitForSeconds(_devSkipBoard > _engine.Community.Count ? 0.02f : thinkTime);
                     var decision = Bot.Decide(_engine, p, _rng);
                     _engine.Act(decision.Item1, decision.Item2);
                 }
@@ -324,6 +343,7 @@ namespace HoldemTable
             }
 
             if (_engine.HandOver) _banner = ResultText(chipsBefore);
+            _devSkipBoard = 0;
         }
 
         /// <summary>

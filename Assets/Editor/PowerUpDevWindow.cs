@@ -21,6 +21,12 @@ namespace HoldemEditor
         private string _message = "";
         private Vector2 _scroll;
 
+        // scenario
+        private string _myCards = "", _boardCards = "";
+        private string[] _oppCards = new string[0];
+        private int _autoPlayTo;   // 0 off, 1 flop, 2 turn, 3 river
+        private static readonly string[] AutoPlayNames = { "Off (play normally)", "Flop (3 cards)", "Turn (4 cards)", "River (5 cards)" };
+
         private static readonly string[] RollNames = { "Real roll", "1", "2", "3", "4", "5", "6" };
 
         [MenuItem("Window/Poker/Power-Up Dev Panel %#d")]
@@ -41,7 +47,7 @@ namespace HoldemEditor
                 EditorGUILayout.HelpBox("Press Play first. This window controls the running game.", MessageType.Info);
                 return;
             }
-            var table = Object.FindFirstObjectByType<PokerTable3D>();
+            var table = PokerTable3D.Current;
             if (table == null || table.Engine == null || table.PowerUps == null || table.MySeat < 0)
             {
                 EditorGUILayout.HelpBox("No poker table is running.", MessageType.Warning);
@@ -52,6 +58,9 @@ namespace HoldemEditor
             int me = table.MySeat;
 
             _scroll = EditorGUILayout.BeginScrollView(_scroll);
+
+            DrawScenario(table, eng, me);
+            EditorGUILayout.Space(10f);
 
             // ---- 1. give a power-up
             EditorGUILayout.LabelField("1. Give yourself a power-up", EditorStyles.boldLabel);
@@ -118,6 +127,52 @@ namespace HoldemEditor
             EditorGUILayout.EndScrollView();
         }
 
+        // ------------------------------------------------------------ scenario: deal an exact situation, skip ahead
+        private void DrawScenario(PokerTable3D table, GameEngine eng, int me)
+        {
+            EditorGUILayout.LabelField("Scenario: deal an exact situation", EditorStyles.boldLabel);
+            EditorGUILayout.LabelField("Cards like As Kd 7h (ranks 2-9 T J Q K A, suits c d h s). Leave blank = random.", EditorStyles.miniLabel);
+
+            if (_oppCards.Length != eng.Players.Count) System.Array.Resize(ref _oppCards, eng.Players.Count);
+            _myCards = EditorGUILayout.TextField("Your 2 cards", _myCards);
+            _boardCards = EditorGUILayout.TextField("Board (up to 5)", _boardCards);
+            for (int i = 0; i < eng.Players.Count; i++)
+                if (i != me) _oppCards[i] = EditorGUILayout.TextField(eng.Players[i].Name + "'s cards", _oppCards[i] ?? "");
+            _autoPlayTo = EditorGUILayout.Popup("Auto check/call until", _autoPlayTo, AutoPlayNames);
+
+            EditorGUILayout.BeginHorizontal();
+            if (GUILayout.Button("Deal this scenario")) DealScenario(table, eng, me);
+            if (GUILayout.Button("Skip this hand ahead now"))
+            {
+                if (_autoPlayTo == 0) _message = "Pick Flop, Turn or River in 'Auto check/call until' first.";
+                else { table.DevSkipToBoard(_autoPlayTo + 2); _message = "Checking / calling until the board has " + (_autoPlayTo + 2) + " cards."; }
+            }
+            EditorGUILayout.EndHorizontal();
+            EditorGUILayout.LabelField(table.IsBusy ? "A hand is running now." : "No hand running: Deal this scenario starts one.", EditorStyles.miniLabel);
+        }
+
+        private void DealScenario(PokerTable3D table, GameEngine eng, int me)
+        {
+            var sc = new Scenario();
+            string err = CardParser.TryParseList(_boardCards, out sc.Board);
+            if (err != null) { _message = "Board: " + err; return; }
+
+            for (int i = 0; i < eng.Players.Count; i++)
+            {
+                string text = i == me ? _myCards : _oppCards[i];
+                err = CardParser.TryParseList(text, out List<Card> hole);
+                if (err != null) { _message = eng.Players[i].Name + ": " + err; return; }
+                if (hole.Count > 0) sc.Hole[i] = hole;
+            }
+
+            err = ScenarioBuilder.Apply(eng, sc);
+            if (err != null) { _message = "Scenario not dealt: " + err; return; }
+
+            table.DevSkipToBoard(_autoPlayTo == 0 ? 0 : _autoPlayTo + 2);
+            if (table.DevDealNow()) _message = "Dealt your scenario.";
+            else _message = "A hand is still running, so the scenario is waiting. It is used the next time a hand is dealt (press Deal hand, or New game first).";
+        }
+
         private UseRequest BuildRequest()
         {
             var req = new UseRequest
@@ -127,39 +182,8 @@ namespace HoldemEditor
                 ChosenSuit = _suit,
                 ForcedRoll = _roll == 0 ? (int?)null : _roll,
             };
-            if (TryParseCard(_exact, out Card c)) req.ChosenCard = c;
+            if (CardParser.TryParse(_exact, out Card c)) req.ChosenCard = c;
             return req;
-        }
-
-        /// <summary>"As" = ace of spades, "Td" = ten of diamonds, "7h" = seven of hearts.</summary>
-        private static bool TryParseCard(string s, out Card card)
-        {
-            card = default;
-            if (string.IsNullOrEmpty(s) || s.Length != 2) return false;
-            Rank rank;
-            switch (char.ToUpperInvariant(s[0]))
-            {
-                case 'A': rank = Rank.Ace; break;
-                case 'K': rank = Rank.King; break;
-                case 'Q': rank = Rank.Queen; break;
-                case 'J': rank = Rank.Jack; break;
-                case 'T': rank = Rank.Ten; break;
-                default:
-                    if (s[0] < '2' || s[0] > '9') return false;
-                    rank = (Rank)(s[0] - '0');
-                    break;
-            }
-            Suit suit;
-            switch (char.ToLowerInvariant(s[1]))
-            {
-                case 'c': suit = Suit.Clubs; break;
-                case 'd': suit = Suit.Diamonds; break;
-                case 'h': suit = Suit.Hearts; break;
-                case 's': suit = Suit.Spades; break;
-                default: return false;
-            }
-            card = new Card(rank, suit);
-            return true;
         }
     }
 }
