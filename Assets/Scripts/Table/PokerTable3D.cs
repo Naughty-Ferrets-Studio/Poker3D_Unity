@@ -90,7 +90,6 @@ namespace HoldemTable
             BuildTable();
             SetupCamera();
             NewGame(seatCount);
-            if (GetComponent<DevPanel>() == null) gameObject.AddComponent<DevPanel>();
             StartCoroutine(Run());
         }
 
