@@ -208,6 +208,33 @@ namespace HoldemTable
             }
         }
 
+        private GameObject _avatarRoot;
+
+        /// <summary>One placeholder avatar per seat: a flat ellipse behind the cards that shakes when its player is twitching.</summary>
+        private void BuildAvatars()
+        {
+            if (_avatarRoot != null) Destroy(_avatarRoot);
+            _avatarRoot = new GameObject("Avatars");
+            _avatarRoot.transform.SetParent(transform, false);
+            for (int i = 0; i < _seatPos.Length; i++)
+            {
+                GameObject ball = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+                ball.name = "Avatar " + i;
+                var col = ball.GetComponent<Collider>();
+                if (col != null) Destroy(col);                       // must not block clicks on cards
+                ball.transform.SetParent(_avatarRoot.transform, false);
+                Vector3 outward = _seatPos[i].normalized;
+                ball.transform.localPosition = _seatPos[i] + outward * 1.9f + Vector3.up * 0.3f;
+                ball.transform.localRotation = _seatYaw[i];
+                ball.transform.localScale = new Vector3(1.4f, 0.55f, 0.85f);   // wide, low, shallow: a horizontal ellipse
+                Color c = i == HumanSeat() ? new Color(0.95f, 0.8f, 0.3f) : Color.HSVToRGB((i * 0.17f + 0.05f) % 1f, 0.45f, 0.85f);
+                ball.GetComponent<MeshRenderer>().sharedMaterial = TableMaterials.Lit(c, 0.3f);
+                var av = ball.AddComponent<SeatAvatar>();
+                av.Seat = i;
+                av.TellLevel = s => _powerUps != null ? _powerUps.TellLevel(s) : 0f;
+            }
+        }
+
         private void NewGame(int seats)
         {
             StopAllCoroutines();
@@ -222,6 +249,7 @@ namespace HoldemTable
             _powerUps = new PowerUpSystem(_engine) { IgnoreTiming = keepIgnore };
 
             LayoutSeats(seatCount);
+            BuildAvatars();
             _hole.Clear();
             for (int i = 0; i < seatCount; i++) _hole.Add(new List<CardObject>());
             ClearCards();

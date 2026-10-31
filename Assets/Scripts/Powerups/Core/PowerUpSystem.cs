@@ -40,10 +40,34 @@ namespace Holdem.PowerUps
         private readonly HashSet<int> _accused = new HashSet<int>();
         private int _effectsHand = -1;
 
+        private readonly Dictionary<int, float> _bluffs = new Dictionary<int, float>();
+
         private void Sync()
         {
             if (_effectsHand == _engine.HandNumber) return;
-            _effects.Clear(); _accused.Clear(); _effectsHand = _engine.HandNumber; // a new hand wipes them
+            _effects.Clear(); _accused.Clear(); _bluffs.Clear(); _effectsHand = _engine.HandNumber; // a new hand wipes them
+        }
+
+        /// <summary>
+        /// How much a seat is visibly twitching right now, 0 to 1. This is THE tell signal: the 3D avatar shakes by this
+        /// much, and a bot reads the same number (plus noise) when it decides whom to accuse.
+        /// It comes from active effects (a sticker, a card being sat on) and from bluffs.
+        /// </summary>
+        public float TellLevel(int seat)
+        {
+            Sync();
+            if (_engine.HandOver || seat < 0 || seat >= _engine.Players.Count || _engine.Players[seat].Folded) return 0f;
+            float level = 0f;
+            foreach (var e in _effects) if (e.Seat == seat) level = Math.Max(level, e.Definition.TellStrength(e.Tier));
+            if (_bluffs.TryGetValue(seat, out float b)) level = Math.Max(level, b);
+            return level;
+        }
+
+        /// <summary>A seat that is NOT using anything fakes a twitch for the rest of the hand, to bait an accusation.</summary>
+        public void Bluff(int seat, float strength)
+        {
+            Sync();
+            _bluffs[seat] = Math.Max(0f, Math.Min(1f, strength));
         }
 
         public IReadOnlyList<ActiveEffect> Effects(int seat) { Sync(); return _effects.Where(e => e.Seat == seat).ToList(); }

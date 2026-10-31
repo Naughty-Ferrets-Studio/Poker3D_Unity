@@ -21,6 +21,7 @@ namespace HoldemEditor
         private Suit _suit = Suit.Hearts;
         private string _exact = "As";
         private int _accuseTarget = 1, _accuseName, _guess;   // _guess: 0 = lower, 1 = higher
+        private float _bluff = 0.7f;
         private string _message = "";
         private Vector2 _scroll;
 
@@ -140,6 +141,13 @@ namespace HoldemEditor
             if (held.HasValue) EditorGUILayout.HelpBox("Sitting on: " + held.Value, MessageType.None);
             var dis = eng.GetDisguise(me);
             if (dis.HasValue) EditorGUILayout.HelpBox("Sticker " + dis.Value.Sticker + " covers the real " + dis.Value.Real, MessageType.None);
+
+            EditorGUILayout.Space();
+            EditorGUILayout.LabelField("Twitch (tell) levels right now", EditorStyles.boldLabel);
+            for (int i = 0; i < n; i++)
+                EditorGUILayout.LabelField("   " + eng.Players[i].Name, sys.TellLevel(i).ToString("0.00") + (sys.TellLevel(i) > 0f ? "   (shaking)" : ""));
+            _bluff = EditorGUILayout.Slider("Bluff strength", _bluff, 0f, 1f);
+            if (GUILayout.Button("Make " + eng.Players[me].Name + " twitch (bluff, no power-up)")) { sys.Bluff(me, _bluff); _message = "A bluff twitch for the rest of this hand."; }
 
             DrawAccuse(eng, sys, seatNames, me);
             DrawPauses(eng, table, me);

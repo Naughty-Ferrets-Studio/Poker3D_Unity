@@ -24,6 +24,9 @@ namespace Holdem.PowerUps
         public override int Bounty(Tier tier) => tier == Tier.Mythic ? 3 : 2;
         public override string FollowUpLabel => "Sneak the card into your hand";
 
+        /// <summary>Sitting on a card makes you fidget. A better tier is smoother about it.</summary>
+        public override float TellStrength(Tier tier) => tier == Tier.Rare ? 0.8f : tier == Tier.Epic ? 0.5f : 0.25f;
+
         public override string Describe(Tier tier)
         {
             if (tier == Tier.Rare) return "Secretly take a random card from the deck and sit on it. Later, swap it with one of your hole cards. Don't get caught.";

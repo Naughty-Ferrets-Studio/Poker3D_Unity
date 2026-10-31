@@ -450,6 +450,53 @@ namespace Holdem.Tests
             Assert.IsTrue(e.Players[1].Chips < before);
         }
 
+
+        // ================================================================ tells (the shaking avatar)
+        [Test]
+        public void Tells_ADisguiseShakesLessWithTheTier_AndTheLevelIsPublic()
+        {
+            foreach (var (tier, expected) in new[] { (Tier.Rare, 1f), (Tier.Epic, 0.5f), (Tier.Mythic, 0f) })
+            {
+                var (e, sys) = Hand();
+                Assert.AreEqual(0f, sys.TellLevel(0), 0.0001);
+                sys.Use(0, Give(sys, 0, "disguised", tier), new UseRequest { CardIndex = 0, ChosenCard = FreshCard(e) });
+                Assert.AreEqual(expected, sys.TellLevel(0), 0.0001, tier.ToString());
+                Assert.AreEqual(0f, sys.TellLevel(1), 0.0001, "other players stay calm");
+            }
+        }
+
+        [Test]
+        public void Tells_SittingOnABumbaCardTwitches_UntilYouSneakItIn()
+        {
+            var (e, sys) = Hand();
+            sys.Use(0, Give(sys, 0, "bumba", Tier.Rare), UseRequest.None);
+            Assert.AreEqual(0.8f, sys.TellLevel(0), 0.0001);
+            sys.UseFollowUp(0, sys.Effects(0)[0], new UseRequest { CardIndex = 0 });
+            Assert.AreEqual(0f, sys.TellLevel(0), 0.0001);
+        }
+
+        [Test]
+        public void Tells_ABluffTwitchLooksTheSame_ButCostsNothing_AndEndsWithTheHand()
+        {
+            var (e, sys) = Hand();
+            sys.Bluff(2, 0.7f);
+            Assert.AreEqual(0.7f, sys.TellLevel(2), 0.0001);
+            Assert.AreEqual(0, sys.Effects(2).Count);
+            V.Finish(e);
+            Assert.AreEqual(0f, sys.TellLevel(2), 0.0001);   // hand over
+            e.StartHand();
+            Assert.AreEqual(0f, sys.TellLevel(2), 0.0001);   // a new hand wipes it
+        }
+
+        [Test]
+        public void Tells_AFoldedPlayerStopsTwitching()
+        {
+            var (e, sys) = Hand();
+            sys.Bluff(1, 1f);
+            e.Players[1].Folded = true;
+            Assert.AreEqual(0f, sys.TellLevel(1), 0.0001);
+        }
+
         [Test]
         public void TheOneAccusationPerHand_IsSharedAcrossPowerUps()
         {

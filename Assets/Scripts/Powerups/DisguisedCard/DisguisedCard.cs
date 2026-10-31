@@ -27,6 +27,8 @@ namespace Holdem.PowerUps
         /// <summary>How visible the disguise is to opponents (the table can shake or deform the card by this much).</summary>
         public static TellLevel Tells(Tier tier) => tier == Tier.Rare ? TellLevel.Many : tier == Tier.Epic ? TellLevel.Some : TellLevel.None;
 
+        public override float TellStrength(Tier tier) => Tells(tier) == TellLevel.Many ? 1f : Tells(tier) == TellLevel.Some ? 0.5f : 0f;
+
         public override string Describe(Tier tier)
         {
             string tells = tier == Tier.Rare ? "Hard shake: many tells." : tier == Tier.Epic ? "Normal shake." : "Perfectly clean, no tells.";

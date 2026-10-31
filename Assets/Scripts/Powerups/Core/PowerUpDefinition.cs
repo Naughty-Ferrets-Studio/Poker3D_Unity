@@ -98,6 +98,9 @@ namespace Holdem.PowerUps
         /// <summary>The effect after being caught (card back into the deck, sticker off...). ctx is the accused player's.</summary>
         public virtual void OnCaught(PowerUpContext ctx, ActiveEffect effect, AccuseRequest req) { }
 
+        /// <summary>How visible this power-up is to the other players while it is active, 0 (invisible) to 1 (obvious). The avatar shakes by this much.</summary>
+        public virtual float TellStrength(Tier tier) => 0f;
+
         /// <summary>When it can be used.</summary>
         public virtual UseWindow Window => UseWindow.InHand;
 
