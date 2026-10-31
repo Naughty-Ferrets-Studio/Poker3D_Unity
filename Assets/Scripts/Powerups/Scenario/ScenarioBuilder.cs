@@ -12,7 +12,7 @@ namespace Holdem.PowerUps
     {
         /// <summary>Hole cards by seat (0, 1 or 2 cards; missing ones are random). A seat that is missing or null is fully random.</summary>
         public Dictionary<int, List<Card>> Hole = new Dictionary<int, List<Card>>();
-        /// <summary>Board cards in order: flop 1-3, turn, river. Up to 5; missing ones are random.</summary>
+        /// <summary>Board cards in order: flop 1-3, turn, river (Cross: 5 / 2 / 2, up to 9). Missing ones are random.</summary>
         public List<Card> Board = new List<Card>();
     }
 
@@ -100,7 +100,9 @@ namespace Holdem.PowerUps
                     if (!used.Add(c)) throw new ArgumentException("The card " + c + " is used twice.");
             foreach (var kv in s.Hole)
                 if (kv.Value.Count > 2) throw new ArgumentException("A player can have at most 2 hole cards.");
-            if (s.Board.Count > 5) throw new ArgumentException("The board can have at most 5 cards.");
+            bool cross = e.NextRules.Cross;                 // the Cross has 9 board cards, dealt 5 / 2 / 2
+            int maxBoard = cross ? 9 : 5;
+            if (s.Board.Count > maxBoard) throw new ArgumentException("The board can have at most " + maxBoard + " cards.");
 
             // everything not chosen, in random order (fills the gaps)
             var pool = new List<Card>();
@@ -127,10 +129,11 @@ namespace Holdem.PowerUps
                 }
             int b = 0;
             Card BoardCard() { if (b < s.Board.Count) return s.Board[b++]; b++; return Fill(); }
-            draws.Add(Fill());                                   // burn
-            for (int i = 0; i < 3; i++) draws.Add(BoardCard());  // flop
-            draws.Add(Fill()); draws.Add(BoardCard());           // burn, turn
-            draws.Add(Fill()); draws.Add(BoardCard());           // burn, river
+            foreach (int count in cross ? new[] { 5, 2, 2 } : new[] { 3, 1, 1 }) // flop, turn, river
+            {
+                draws.Add(Fill());                               // burn
+                for (int i = 0; i < count; i++) draws.Add(BoardCard());
+            }
             while (draws.Count < 52) draws.Add(Fill());
 
             draws.Reverse(); // Deck wants bottom to top

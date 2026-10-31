@@ -19,11 +19,16 @@ namespace Holdem
 
         public Card(Rank rank, Suit suit) { Rank = rank; Suit = suit; }
 
+        /// <summary>The joker (53rd card). Rank 0 is not a real rank, so the normal 52-card loops never create it.</summary>
+        public static Card Joker => new Card((Rank)0, Suit.Clubs);
+        public bool IsJoker => (int)Rank == 0;
+
         /// <summary>Asset / prefab / texture name, e.g. card_hearts_A, card_spades_02, card_clubs_10.</summary>
         public string AssetName
         {
             get
             {
+                if (IsJoker) return "card_joker";
                 string r;
                 switch (Rank)
                 {

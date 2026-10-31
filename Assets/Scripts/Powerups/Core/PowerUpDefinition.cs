@@ -12,6 +12,7 @@ namespace Holdem.PowerUps
         public Card? ChosenCard;    // an exact card (Bumba Card III)
         public Suit? ChosenSuit;    // a suit (Bumba Card II)
         public int? ForcedRoll;     // dev mode only: force the die result
+        public int TargetCardIndex; // which of the target's hole cards (Snatch the Sock II)
         public static UseRequest None => new UseRequest { TargetSeat = -1 };
     }
 
@@ -22,9 +23,40 @@ namespace Holdem.PowerUps
         public string Message = "";
         /// <summary>Cards only the user may see (X-Ray). The UI shows them to the human; a bot may read them too.</summary>
         public List<Card> Secret = new List<Card>();
+        /// <summary>The use started an effect that stays on the table (Bumba Card, Disguised Card). Opponents may accuse it.</summary>
+        public bool Active;
+        /// <summary>A follow-up action finished the effect.</summary>
+        public bool EndsEffect;
 
         public static UseResult Fail(string why) => new UseResult { Ok = false, Message = why };
         public static UseResult Success(string msg) => new UseResult { Ok = true, Message = msg };
+    }
+
+    /// <summary>When a power-up can be used.</summary>
+    public enum UseWindow
+    {
+        InHand,        // while you are still in a hand that is running
+        BetweenHands,  // after one hand ended, before the next deal (it shapes the next hand)
+        AllInRunout,   // everybody left is all-in and the rest of the board has not been dealt yet
+    }
+
+    /// <summary>An effect that is still on the table after a power-up was used (a card being sat on, a sticker on a card).</summary>
+    public sealed class ActiveEffect
+    {
+        public readonly int Seat;
+        public readonly PowerUpDefinition Definition;
+        public readonly Tier Tier;
+        public ActiveEffect(int seat, PowerUpDefinition definition, Tier tier) { Seat = seat; Definition = definition; Tier = tier; }
+        public override string ToString() => Definition.VersionName(Tier) + " (seat " + Seat + ")";
+    }
+
+    /// <summary>One accusation: "I think Target is using [NamedId]".</summary>
+    public struct AccuseRequest
+    {
+        public int Accuser, Target;
+        public string NamedId;      // "bumba" or "disguised"
+        public bool? GuessHigher;   // Disguised Card: is the real card higher than the sticker? (a tie counts as lower)
+        public int RevealIndex;     // Bumba Card: which hole card the caught thief shows
     }
 
     /// <summary>Everything a power-up may touch. It only reaches the game through the engine's public card actions.</summary>
@@ -41,6 +73,8 @@ namespace Holdem.PowerUps
         public bool IsMyTurn => Engine.Current == Seat;
         public bool HandRunning => !Engine.HandOver;
         public bool InHand => HandRunning && !Me.Folded && !Me.IsOut;
+        /// <summary>Is the seat 'p' still playing this hand?</summary>
+        public bool Alive(int seat) => seat >= 0 && seat < Engine.Players.Count && !Engine.Players[seat].Folded && !Engine.Players[seat].IsOut;
     }
 
     /// <summary>
@@ -53,6 +87,23 @@ namespace Holdem.PowerUps
         /// <summary>Stable id, used by saves, tests and the dev panel. Never change it after release.</summary>
         public abstract string Id { get; }
         public abstract string Name { get; }
+
+        /// <summary>Id of the power-up an accuser has to name to catch this one. Only used when Accusable.</summary>
+        public virtual bool Accusable => false;
+        public virtual bool NeedsGuess => false;
+        /// <summary>Chip bounty (in antes) the accuser takes when this power-up is caught.</summary>
+        public virtual int Bounty(Tier tier) => 0;
+        /// <summary>Did the accusation catch it? (Bumba: always. Disguised: if the higher/lower guess was right.)</summary>
+        public virtual bool IsCaught(PowerUpContext ctx, ActiveEffect effect, AccuseRequest req) => true;
+        /// <summary>The effect after being caught (card back into the deck, sticker off...). ctx is the accused player's.</summary>
+        public virtual void OnCaught(PowerUpContext ctx, ActiveEffect effect, AccuseRequest req) { }
+
+        /// <summary>When it can be used.</summary>
+        public virtual UseWindow Window => UseWindow.InHand;
+
+        /// <summary>A second step after Use (Bumba Card: sneak the card into your hand). Null = none.</summary>
+        public virtual string FollowUpLabel => null;
+        public virtual UseResult FollowUp(PowerUpContext ctx, ActiveEffect effect, UseRequest req) => UseResult.Fail("Nothing to do.");
 
         /// <summary>
         /// The tiers this power-up exists at, lowest first. Each entry is one version (I, II, III) fixed to that tier.
@@ -73,7 +124,7 @@ namespace Holdem.PowerUps
         }
 
         /// <summary>"Bumba Card II", or just "The Dice" when there is only one version.</summary>
-        public string VersionName(Tier t)
+        public virtual string VersionName(Tier t)
         {
             if (Tiers.Length == 1) return Name;
             string[] roman = { "I", "II", "III", "IV", "V" };
@@ -86,6 +137,9 @@ namespace Holdem.PowerUps
 
         /// <summary>Returns null if it can be used now, otherwise the reason it can't.</summary>
         public abstract string CanUse(PowerUpContext ctx);
+
+        /// <summary>Shared check for powers that must be used on your own turn.</summary>
+        protected static string NeedTurn(PowerUpContext ctx) => ctx.IsMyTurn || ctx.IgnoreTiming ? null : "This can only be used on your turn.";
 
         /// <summary>Does the effect. Only called when CanUse returned null. Return Fail(...) to refuse without spending it.</summary>
         public abstract UseResult Use(PowerUpContext ctx, UseRequest req);

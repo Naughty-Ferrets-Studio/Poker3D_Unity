@@ -71,7 +71,7 @@ public static class Bot
         // ---------------------------------------------------------------- preflop
         if (e.Street == Street.Preflop)
         {
-            int chen = Chen(p.Hole[0], p.Hole[1]);
+            int chen = HoleStrength(e, p);
             bool raised = e.CurrentBet > bb;
             double level = (double)e.CurrentBet / bb;       // size of the current bet in big blinds
             double looseAdj = (st.Loose - 1) * 4;
@@ -125,7 +125,7 @@ public static class Bot
 
         // ---------------------------------------------------------------- postflop
         bool river = e.Street == Street.River;
-        double eq = Equity(p.Hole, e.Community, opp, 300, r);
+        double eq = VariantActive(e, p) ? CategoryEquity(e, p) : Equity(p.Hole, e.Community, opp, 300, r);
         double fair = 1.0 / (opp + 1);
         double str = (eq - fair) / (1 - fair);              // 0 = average hand for this many opponents, 1 = the nuts
 
@@ -161,6 +161,30 @@ public static class Bot
             return BetFrac(0.75 + 0.3 * r.NextDouble());                              // semi-bluff raise
         if (callAmt <= pot * 0.12 && r.NextDouble() < 0.05 * st.Loose) return call;   // cheap curiosity call
         return fold;
+    }
+
+    // ------------------------------------------------------------------ power-up rules (wild cards, the Cross, a third hole card)
+    // The Monte Carlo equity below only understands normal 2-card hands and a 5-card board. When a power-up changes
+    // the rules, bots fall back to a simple rule of thumb based on the hand they hold right now.
+    private static bool VariantActive(GameEngine e, Player p) =>
+        e.Rules.AnyWild || e.Rules.Cross || p.Hole.Count != 2 || e.Community.Count > 5 || p.Hole.Any(c => c.IsJoker);
+
+    /// <summary>Preflop strength in Chen points. A wild card is treated as a monster; with three cards the best two are used.</summary>
+    private static int HoleStrength(GameEngine e, Player p)
+    {
+        if (p.Hole.Count < 2) return 0;
+        if (p.Hole.Any(c => e.Rules.IsWild(c))) return 18;
+        var best = p.Hole.OrderByDescending(c => (int)c.Rank).Take(2).ToList();
+        return Chen(best[0], best[1]);
+    }
+
+    private static readonly double[] CategoryEq = { 0.30, 0.50, 0.68, 0.78, 0.85, 0.90, 0.94, 0.97, 0.99, 1.00 };
+
+    private static double CategoryEquity(GameEngine e, Player p)
+    {
+        long score = e.ScoreFor(p, e.Community);
+        int cat = score < 0 ? 0 : HandEvaluator.Category(score);
+        return CategoryEq[Math.Max(0, Math.Min(9, cat))];
     }
 
     // ------------------------------------------------------------------ preflop hand strength (Chen formula)

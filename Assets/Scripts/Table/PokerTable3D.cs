@@ -1,5 +1,6 @@
 using System.Collections;
 using System.Collections.Generic;
+using System.Linq;
 using UnityEngine;
 using Holdem;
 using Holdem.PowerUps;
@@ -59,7 +60,7 @@ namespace HoldemTable
             return true;
         }
         /// <summary>Dev mode: you and the bots check / call until this many board cards are out (3 = flop, 4 = turn, 5 = river), then play resumes normally. 0 = off.</summary>
-        public void DevSkipToBoard(int cards) { _devSkipBoard = Mathf.Clamp(cards, 0, 5); }
+        public void DevSkipToBoard(int cards) { _devSkipBoard = Mathf.Clamp(cards, 0, 9); }
 
         /// <summary>Which seat is you (-1 if none).</summary>
         public int MySeat => _engine == null ? -1 : HumanSeat();
@@ -78,6 +79,10 @@ namespace HoldemTable
 
         // your turn: the buttons set these, PlayHand picks them up
         private bool _awaitHuman, _hasChoice;
+        private int _discardSeat = -1, _discardChoice = -1; // Pineapple: a human has to throw one card away
+        private bool _runoutWait;                            // everybody is all-in: waiting for the human to use a power-up or continue
+        /// <summary>Dev mode: always stop when everyone is all-in, so Run It Twice can be tested without holding it.</summary>
+        public bool devPauseAtRunout;
         private int _devSkipBoard; // dev mode: auto check/call until this many board cards are out (0 = off)
         private PlayerAction _choiceAction;
         private int _choiceRaiseTo;
@@ -212,6 +217,7 @@ namespace HoldemTable
             _engine = new GameEngine();
             _engine.NewGame(seatCount - 1);
             _engine.Logged += OnLog;
+            _engine.PauseBeforeRunout = true;   // lets Run It Twice / Thrice be used
             bool keepIgnore = _powerUps != null && _powerUps.IgnoreTiming;
             _powerUps = new PowerUpSystem(_engine) { IgnoreTiming = keepIgnore };
 
@@ -224,6 +230,7 @@ namespace HoldemTable
             _banner = "Press \"Deal hand\"";
             _busy = false;
             _awaitHuman = false; _hasChoice = false; _devSkipBoard = 0;
+            _discardSeat = -1; _runoutWait = false;
             _lookedAtCards = false;
             if (_dealerButton != null) _dealerButton.SetActive(false);
         }
@@ -246,14 +253,24 @@ namespace HoldemTable
         }
 
         // ============================================================ positions
-        private Vector3 HolePos(int seat, int index)
+        private Vector3 HolePos(int seat, int index, int count = 2)
         {
-            var local = new Vector3(index == 0 ? -0.4f : 0.4f, CardY + index * 0.004f, 0f);
+            // two cards sit side by side; a third card (Pineapple) spreads them out
+            float x = count >= 3 ? (index - 1) * 0.75f : (index == 0 ? -0.4f : 0.4f);
+            var local = new Vector3(x, CardY + index * 0.004f, 0f);
             return _seatPos[seat] + _seatYaw[seat] * local;
         }
 
-        private static Vector3 BoardPos(int index)
+        private const float CrossSpacing = 0.62f; // how far apart the vertical cards of the Cross are (tune to taste)
+
+        private Vector3 BoardPos(int index)
         {
+            if (_engine != null && _engine.Rules.Cross && index >= 5)
+            {
+                // The Cross: 0-4 are the horizontal line. 5 and 6 sit above the centre card, 7 and 8 below it.
+                float dz = index == 5 ? 2f * CrossSpacing : index == 6 ? CrossSpacing : index == 7 ? -CrossSpacing : -2f * CrossSpacing;
+                return new Vector3(0f, CardY + (index - 4) * 0.004f, BoardZ + dz);
+            }
             return new Vector3((index - 2) * BoardSpacing, CardY, BoardZ);
         }
 
@@ -297,6 +314,20 @@ namespace HoldemTable
             int guard = 0;
             while (!_engine.HandOver && guard++ < 600)
             {
+                if (_engine.AwaitingDiscard)   // Pineapple: somebody has to throw a card away before play goes on
+                {
+                    yield return StartCoroutine(HandleDiscard());
+                    MuckNewFolds(wasFolded);
+                    yield return StartCoroutine(PlayNewEvents());
+                    continue;
+                }
+                if (_engine.RunoutPending)     // everyone is all-in: a chance to use Run It Twice / Thrice
+                {
+                    yield return StartCoroutine(HandleRunout());
+                    MuckNewFolds(wasFolded);
+                    yield return StartCoroutine(PlayNewEvents());
+                    continue;
+                }
                 Player p = _engine.Players[_engine.Current];
                 if (p.IsHuman && !autoPlayHuman)
                 {
@@ -377,13 +408,11 @@ namespace HoldemTable
         /// </summary>
         private string HandLabel(IReadOnlyList<Card> hole, IReadOnlyList<Card> board)
         {
-            _tmpCards.Clear();
-            _tmpCards.AddRange(hole);
-            _tmpCards.AddRange(board);
-            if (_tmpCards.Count < 2) return "";
-            if (_tmpCards.Count < 5)
-                return _tmpCards[0].Rank == _tmpCards[1].Rank ? HandLabels[1] : HandLabels[0];
-            return HandLabels[HandEvaluator.Category(HandEvaluator.Evaluate(_tmpCards))];
+            if (hole.Count < 2) return "";
+            if (board.Count < 3)
+                return !hole[0].IsJoker && !hole[1].IsJoker && hole[0].Rank == hole[1].Rank ? HandLabels[1] : HandLabels[0];
+            string name = _engine.HandName(hole, board); // knows about wild cards, the Cross and a third hole card
+            return name.Length > 0 ? name : HandLabels[0];
         }
 
         private void PlaceDealerButton()
@@ -433,6 +462,8 @@ namespace HoldemTable
             {
                 case DealKind.Replace: ReplaceCard(e); return;
                 case DealKind.Reveal:  RevealCard(e);  return;
+                case DealKind.Swap:    SwapFace(e);    return;
+                case DealKind.Discard: DiscardCard(e); return;
                 case DealKind.Peek:    return; // nothing to draw: the card stays in the deck; a "secret view" panel comes with the power-up UI
             }
 
@@ -449,7 +480,9 @@ namespace HoldemTable
                 case DealKind.Hole:
                     int index = _hole[e.Seat].Count;
                     _hole[e.Seat].Add(card);
-                    target = HolePos(e.Seat, index);
+                    int heldCount = _hole[e.Seat].Count;
+                    if (heldCount >= 3) RelayoutHole(e.Seat, heldCount, heldCount - 1); // a third card: make room
+                    target = HolePos(e.Seat, index, heldCount);
                     yaw = _seatYaw[e.Seat];
                     faceUp = _showAll && !_engine.Players[e.Seat].IsHuman; // every hole card starts face-down; click your own cards to look at them
                     break;
@@ -466,6 +499,82 @@ namespace HoldemTable
             card.StartCoroutine(card.MoveTo(target, yaw, faceUp, cardTravel));
         }
 
+        /// <summary>Moves a seat's hole cards to the positions for 'count' cards (skipping the card at index 'skip').</summary>
+        private void RelayoutHole(int seat, int count, int skip = -1)
+        {
+            List<CardObject> list = _hole[seat];
+            for (int i = 0; i < list.Count; i++)
+            {
+                CardObject c = list[i];
+                if (c == null || i == skip) continue;
+                c.StartCoroutine(c.MoveTo(HolePos(seat, i, count), _seatYaw[seat], c.FaceUp, 0.25f));
+            }
+        }
+
+        /// <summary>A card on a seat shows a different face in place (a sticker went on or off, or Snatch the Sock swapped cards).</summary>
+        private void SwapFace(DealEvent e)
+        {
+            if (!e.Previous.HasValue || e.Seat < 0 || e.Seat >= _hole.Count) return;
+            CardObject c = _hole[e.Seat].Find(x => x != null && x.Card == e.Previous.Value);
+            if (c == null) { Debug.LogWarning("Swap event: no card object found for " + e.Previous.Value); return; }
+            c.ChangeFace(e.Card);
+        }
+
+        /// <summary>Pineapple: a hole card slides face-down onto the discard pile and the other cards close up.</summary>
+        private void DiscardCard(DealEvent e)
+        {
+            if (e.Seat < 0 || e.Seat >= _hole.Count) return;
+            List<CardObject> list = _hole[e.Seat];
+            var holeNow = _engine.Players[e.Seat].Hole;
+            int idx = list.FindIndex(c => c != null && c.Card == e.Card);               // normally the card itself
+            if (idx < 0) idx = list.FindIndex(c => c != null && !holeNow.Contains(c.Card)); // a stickered card: the one the engine no longer has
+            if (idx < 0) return;
+            CardObject gone = list[idx];
+            list.RemoveAt(idx);
+            gone.StartCoroutine(gone.MoveAndDestroy(BurnPos, cardTravel));
+            RelayoutHole(e.Seat, list.Count);
+        }
+
+        // ---- waiting for a human during the hand
+        private IEnumerator HandleDiscard()
+        {
+            int seat = -1;
+            foreach (var kv in _engine.PendingDiscards)
+                if (kv.Value == _engine.Street && !_engine.Players[kv.Key].Folded) { seat = kv.Key; break; }
+            if (seat < 0) { yield break; }
+            if (autoPlayHuman) { _engine.AutoDiscard(seat); yield break; }
+
+            _discardSeat = seat; _discardChoice = -1;
+            while (_engine.AwaitingDiscard && _discardChoice < 0)  // the dev window can also discard, which ends the wait
+            {
+                if (_animated < _engine.DealEvents.Count) yield return StartCoroutine(PlayNewEvents());
+                yield return null;
+            }
+            if (_engine.AwaitingDiscard && _discardChoice >= 0) _engine.DiscardHole(seat, _discardChoice);
+            _discardSeat = -1;
+        }
+
+        private IEnumerator HandleRunout()
+        {
+            int me = HumanSeat();
+            bool humanMayAct = me >= 0 && !autoPlayHuman && !_engine.Players[me].Folded && _engine.Players[me].AllIn
+                               && _powerUps != null && _powerUps.Inventory(me).Items.Any(i => i.Definition.Window == UseWindow.AllInRunout);
+            if (humanMayAct || devPauseAtRunout)
+            {
+                _runoutWait = true;
+                while (_engine.RunoutPending && _runoutWait)
+                {
+                    if (_animated < _engine.DealEvents.Count) yield return StartCoroutine(PlayNewEvents());
+                    yield return null;
+                }
+                _runoutWait = false;
+            }
+            if (_engine.RunoutPending) _engine.ContinueRunout();
+        }
+
+        /// <summary>Dev mode: carry on after the all-in pause.</summary>
+        public void DevContinueRunout() { _runoutWait = false; }
+
         /// <summary>A card on the table goes back to the deck and a new one takes its exact place (hole card or board card).</summary>
         private void ReplaceCard(DealEvent e)
         {
@@ -480,7 +589,7 @@ namespace HoldemTable
             }
 
             CardObject old = list[idx];
-            Vector3 pos = e.Seat >= 0 ? HolePos(e.Seat, idx) : BoardPos(idx);
+            Vector3 pos = e.Seat >= 0 ? HolePos(e.Seat, idx, _hole[e.Seat].Count) : BoardPos(idx);
             Quaternion yaw = e.Seat >= 0 ? _seatYaw[e.Seat] : Quaternion.identity;
             bool faceUp = e.Seat < 0 || (_showAll && !_engine.Players[e.Seat].IsHuman); // your own cards stay face-down until you hold them
 
@@ -578,7 +687,7 @@ namespace HoldemTable
                 string text = p.Name + "\n$" + p.Chips + (status.Length > 0 ? "\n" + status : "");
                 if (p.IsHuman && !p.Folded && !p.IsOut && !_engine.HandOver && i < _hole.Count && _hole[i].Count > 0)
                     text += "\n(hold a card, or hold H, to see both)";
-                if (_engine.HandOver && _engine.ShowdownReached && !p.Folded && !p.IsOut && p.Hole.Count == 2)
+                if (_engine.HandOver && _engine.ShowdownReached && !p.Folded && !p.IsOut && p.Hole.Count >= 2)
                     text += "\n" + HandLabel(p.Hole, _engine.Community); // cards are face-up at showdown, so name the hand
                 bool active = !_engine.HandOver && i == _engine.Current;
                 int textLines = 1;
@@ -605,7 +714,7 @@ namespace HoldemTable
             if (me >= 0 && me < _hole.Count && me < _seatPos.Length && !_engine.HandOver)
             {
                 Player mp = _engine.Players[me];
-                if (_lookedAtCards && !mp.IsOut && !mp.Folded && mp.Hole.Count == 2 && _hole[me].Count == 2)
+                if (_lookedAtCards && !mp.IsOut && !mp.Folded && mp.Hole.Count >= 2 && _hole[me].Count >= 2)
                 {
                     _tmpBoard.Clear();
                     foreach (CardObject bc in _board) if (bc != null) _tmpBoard.Add(bc.Card);
@@ -654,6 +763,8 @@ namespace HoldemTable
             y += bh;
 
             autoPlayHuman = GUI.Toggle(new Rect(x, y, bw, bh), autoPlayHuman, " Auto-play me", _toggle);
+
+            DrawPrompts(k);
 
             // your Fold / Call / Raise buttons
             if (_awaitHuman && !_hasChoice && !_engine.HandOver && _engine.Current >= 0 && _engine.Players[_engine.Current].IsHuman)
@@ -707,7 +818,7 @@ namespace HoldemTable
 
             int seat = HumanSeat();
             if (seat < 0 || seat >= _hole.Count) return;
-            if (!_lookedAtCards && (_holdKey || _holdCard != null) && _hole[seat].Count == 2)
+            if (!_lookedAtCards && (_holdKey || _holdCard != null) && _hole[seat].Count >= 2)
                 _lookedAtCards = true; // from now on the banner names your hand, even when the cards are face-down again
             foreach (CardObject c in _hole[seat])
             {
@@ -718,6 +829,48 @@ namespace HoldemTable
         }
 
         // ============================================================ your turn
+        /// <summary>Pineapple discard buttons and the all-in "run it" panel.</summary>
+        private void DrawPrompts(float k)
+        {
+            float w = 460f * k, x = (Screen.width - w) / 2f;
+            if (_discardSeat >= 0 && _engine.AwaitingDiscard)
+            {
+                var hole = _engine.Players[_discardSeat].Hole;
+                float h = 110f * k;
+                Rect r = new Rect(x, Screen.height - 260f * k, w, h);
+                GUI.Box(r, "");
+                GUI.Label(new Rect(r.x, r.y + 6f * k, r.width, 28f * k), "The Pineapple: choose a card to throw away", _label);
+                float bw = (r.width - 20f * k - (hole.Count - 1) * 8f * k) / Mathf.Max(1, hole.Count);
+                for (int i = 0; i < hole.Count; i++)
+                    if (GUI.Button(new Rect(r.x + 10f * k + i * (bw + 8f * k), r.y + 44f * k, bw, 50f * k), "Discard " + hole[i], _button))
+                        _discardChoice = i;
+            }
+            if (_runoutWait && _engine.RunoutPending)
+            {
+                int me = HumanSeat();
+                var usable = new List<PowerUpInstance>();
+                if (me >= 0 && _powerUps != null)
+                    foreach (var item in _powerUps.Inventory(me).Items)
+                        if (item.Definition.Window == UseWindow.AllInRunout && _powerUps.CanUse(me, item) == null) usable.Add(item);
+                float h = (80f + usable.Count * 44f) * k;
+                Rect r = new Rect(x, Screen.height - 270f * k, w, h);
+                GUI.Box(r, "");
+                GUI.Label(new Rect(r.x, r.y + 6f * k, r.width, 28f * k), "Everyone is all-in. Use a power-up before the rest of the board?", _label);
+                float y = r.y + 40f * k;
+                foreach (var item in usable)
+                {
+                    if (GUI.Button(new Rect(r.x + 10f * k, y, r.width - 20f * k, 38f * k), "Use " + item.Definition.VersionName(item.Tier), _button))
+                    {
+                        var res = _powerUps.Use(me, item, UseRequest.None);
+                        _banner = res.Message;
+                    }
+                    y += 44f * k;
+                }
+                if (GUI.Button(new Rect(r.x + 10f * k, y, r.width - 20f * k, 38f * k), "Deal the rest of the board", _button))
+                    _runoutWait = false;
+            }
+        }
+
         private void DrawActionBar(float k)
         {
             Player me = _engine.Players[_engine.Current];

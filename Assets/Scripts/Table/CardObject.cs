@@ -67,6 +67,14 @@ namespace HoldemTable
             Apply();
         }
 
+        /// <summary>Shows a different card face on this object (a sticker went on, or two players swapped cards).</summary>
+        public void ChangeFace(Card card)
+        {
+            Card = card;
+            Transform front = transform.Find("Front");
+            if (front != null) front.GetComponent<MeshRenderer>().sharedMaterial = GetMaterial(card.AssetName);
+        }
+
         private void MakeFace(string faceName, Quaternion rotation, float y, Material material)
         {
             GameObject quad = GameObject.CreatePrimitive(PrimitiveType.Quad);

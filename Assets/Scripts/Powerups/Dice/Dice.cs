@@ -21,7 +21,8 @@ namespace Holdem.PowerUps
             string why = NeedHand(ctx);
             if (why != null) return why;
             int have = ctx.Engine.Community.Count;
-            if (ctx.IgnoreTiming ? have == 0 : have < 5) return "The Dice need all 5 community cards on the table.";
+            int need = ctx.Engine.Rules.BoardSize;
+            if (ctx.IgnoreTiming ? have == 0 : have < need) return "The Dice need all " + need + " community cards on the table.";
             return null;
         }
 

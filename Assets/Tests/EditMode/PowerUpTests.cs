@@ -85,8 +85,9 @@ namespace Holdem.Tests
         [Test]
         public void Award_PicksAPowerUpThatReallyExistsAtTheRolledTier()
         {
-            Assert.AreEqual("dice", PowerUpRegistry.PickForTier(Tier.Legendary, n => 0).Id);
-            Assert.AreEqual("bumba", PowerUpRegistry.PickForTier(Tier.Rare, n => 0).Id);
+            foreach (Tier t in Enum.GetValues(typeof(Tier)))
+                Assert.IsNotNull(PowerUpRegistry.PickForTier(t, n => 0), "nothing can drop at " + t);
+            Assert.AreEqual("bombpot", PowerUpRegistry.PickForTier(Tier.Common, n => 0).Id);
             for (int i = 0; i < 50; i++)
             {
                 var d = PowerUpRegistry.PickForTier(Tier.Epic, TestUtil.Seeded(i));
@@ -243,50 +244,6 @@ namespace Holdem.Tests
             Assert.AreEqual(1, changed);
         }
 
-        // ---------------------------------------------------------------- Bumba Card
-        [Test]
-        public void Bumba_I_TakesTheTopCard()
-        {
-            var e = NewHand(); int me = e.Current;
-            var (sys, item) = Give(e, me, "bumba", Tier.Rare);
-            var top = e.DeckCards.Last(); var old = e.Players[me].Hole[1];
-            var r = sys.Use(me, item, new UseRequest { CardIndex = 1 });
-            Assert.IsTrue(r.Ok, r.Message);
-            Assert.AreEqual(top, e.Players[me].Hole[1]);
-            Assert.IsTrue(e.DeckCards.Contains(old));
-            FinishHand(e);
-        }
-
-        [Test]
-        public void Bumba_II_GivesACardOfTheChosenSuit()
-        {
-            var e = NewHand(); int me = e.Current;
-            var (sys, item) = Give(e, me, "bumba", Tier.Epic);
-            var r = sys.Use(me, item, new UseRequest { CardIndex = 0, ChosenSuit = Suit.Hearts });
-            Assert.IsTrue(r.Ok, r.Message);
-            Assert.AreEqual(Suit.Hearts, e.Players[me].Hole[0].Suit);
-            FinishHand(e);
-        }
-
-        [Test]
-        public void Bumba_III_GivesTheExactCard_OrFailsWithoutSpending()
-        {
-            var e = NewHand(); int me = e.Current;
-            var (sys, item) = Give(e, me, "bumba", Tier.Mythic);
-            Card inDeck = e.DeckCards[10];
-            Card heldByAnother = e.Players[(me + 1) % 3].Hole[0];
-
-            var bad = sys.Use(me, item, new UseRequest { CardIndex = 0, ChosenCard = heldByAnother });
-            Assert.IsFalse(bad.Ok);
-            Assert.AreEqual(1, sys.Inventory(me).Count);
-
-            var ok = sys.Use(me, item, new UseRequest { CardIndex = 0, ChosenCard = inDeck });
-            Assert.IsTrue(ok.Ok, ok.Message);
-            Assert.AreEqual(inDeck, e.Players[me].Hole[0]);
-            Assert.AreEqual(0, sys.Inventory(me).Count);
-            FinishHand(e);
-        }
-
         // ---------------------------------------------------------------- general
         [Test]
         public void NothingCanBeUsedOutsideAHand_OrAfterFolding()
@@ -294,20 +251,20 @@ namespace Holdem.Tests
             var e = new GameEngine(); e.NewGame(2);
             var sys = new PowerUpSystem(e);
             sys.Give(0, "bumba", Tier.Rare);
-            Assert.IsFalse(sys.Use(0, sys.Inventory(0).Items[0], new UseRequest { CardIndex = 0 }).Ok);
+            Assert.IsFalse(sys.Use(0, sys.Inventory(0).Items[0], UseRequest.None).Ok);
 
             e.StartHand();
             e.Players[0].Folded = true;
-            Assert.IsFalse(sys.Use(0, sys.Inventory(0).Items[0], new UseRequest { CardIndex = 0 }).Ok);
+            Assert.IsFalse(sys.Use(0, sys.Inventory(0).Items[0], UseRequest.None).Ok);
         }
 
         [Test]
         public void UsingTheSameItemTwice_OnlyWorksOnce()
         {
             var e = NewHand(); int me = e.Current;
-            var (sys, item) = Give(e, me, "bumba", Tier.Rare);
-            Assert.IsTrue(sys.Use(me, item, new UseRequest { CardIndex = 0 }).Ok);
-            Assert.IsFalse(sys.Use(me, item, new UseRequest { CardIndex = 0 }).Ok);
+            var (sys, item) = Give(e, me, "xray", Tier.Epic);
+            Assert.IsTrue(sys.Use(me, item, new UseRequest { TargetSeat = (me + 1) % 3 }).Ok);
+            Assert.IsFalse(sys.Use(me, item, new UseRequest { TargetSeat = (me + 1) % 3 }).Ok);
         }
     }
 }

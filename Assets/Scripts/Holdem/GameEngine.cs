@@ -13,7 +13,7 @@ public enum PlayerAction { Fold, CheckCall, Raise }
 public enum ActResult { Ok, NoActiveHand, NotYourTurn, InvalidAction, IllegalRaise }
 
 /// <summary>Pure game logic - no UI code, so it can be reused in Console/Unity/etc.</summary>
-public class GameEngine
+public partial class GameEngine
 {
     public const int SmallBlind = 10, BigBlind = 20, StartingChips = 1000;
 
@@ -97,6 +97,7 @@ public class GameEngine
         Community.Clear();
         if (NextDeckOverride != null) { _dealer.ReplayHand(NextDeckOverride); NextDeckOverride = null; }
         else _dealer.NewHand(NextInt);
+        BeginVariants();
         HandOver = false; ShowdownReached = false;
         PreflopAggressor = null;
         Street = Street.Preflop;
@@ -107,16 +108,32 @@ public class GameEngine
         int bb = NextSeat(sb, p => !p.IsOut);
 
         Log($"--- New hand. Dealer: {Players[Dealer].Name} ---");
-        PostBlind(Players[sb], SmallBlind, "small");
-        PostBlind(Players[bb], BigBlind, "big");
-        // FIX 2: a short-stacked big blind must not lower the amount everyone else has to call
-        CurrentBet = Math.Max(BigBlind, Players.Max(p => p.Bet));
-        MinRaise = BigBlind;
+        if (Rules.BombPot)
+        {
+            Log("*** BOMB POT! Everybody antes " + Ante + ". No preflop betting. ***");
+            foreach (var p in Players.Where(p => !p.IsOut)) Pay(p, Ante);
+        }
+        else
+        {
+            PostBlind(Players[sb], SmallBlind, "small");
+            PostBlind(Players[bb], BigBlind, "big");
+            // FIX 2: a short-stacked big blind must not lower the amount everyone else has to call
+            CurrentBet = Math.Max(BigBlind, Players.Max(p => p.Bet));
+            MinRaise = BigBlind;
+        }
 
         // two rounds, one card at a time, starting left of the button (the button gets the last card)
         _dealer.DealHoleCards(Dealer, Players.Count, seat => !Players[seat].IsOut,
                               (seat, card) => Players[seat].Hole.Add(card));
 
+        if (Rules.BombPot)
+        {
+            foreach (var p in Players) { p.Bet = 0; p.HasActed = false; p.CanRaise = true; }
+            CurrentBet = 0; MinRaise = BigBlind;
+            NextStreet();   // straight to the flop
+            Advance();
+            return;
+        }
         Current = bb;
         Advance();
     }
@@ -133,8 +150,9 @@ public class GameEngine
     // Rejects instead of silently turning an illegal action into a call, and checks it is that seat's turn.
     public ActResult TryAct(int seat, PlayerAction action, int raiseTo = 0)
     {
-        if (HandOver || Current < 0) return ActResult.NoActiveHand;
+        if (HandOver || Current < 0 || AwaitingDiscard || RunoutPending) return ActResult.NoActiveHand;
         if (seat != Current) return ActResult.NotYourTurn;
+        if (action == PlayerAction.Fold && Rules.ShanKoeMee.Contains(seat)) return ActResult.InvalidAction; // Shan Koe Mee: no folding
         if (!Enum.IsDefined(typeof(PlayerAction), action)) return ActResult.InvalidAction;
 
         if (action == PlayerAction.Raise)
@@ -153,14 +171,16 @@ public class GameEngine
     // Legacy/lenient API (unchanged signature): clamps the raise amount and turns an illegal raise into a call.
     public void Act(PlayerAction action, int raiseTo = 0)
     {
-        if (HandOver || Current < 0) return;
+        if (HandOver || Current < 0 || AwaitingDiscard || RunoutPending) return;
         var p = Players[Current];
         int toCall = CurrentBet - p.Bet;
+        if (action == PlayerAction.Fold && Rules.ShanKoeMee.Contains(Current)) action = PlayerAction.CheckCall; // Shan Koe Mee: no folding
 
         switch (action)
         {
             case PlayerAction.Fold:
                 p.Folded = true;
+                _pendingDiscard.Remove(Current);
                 Log($"{p.Name} folds");
                 break;
 
@@ -202,13 +222,22 @@ public class GameEngine
     {
         while (true)
         {
+            if (AwaitingDiscard || RunoutPending) return;
             if (Players.Count(p => !p.Folded) == 1) { AwardUncontested(); return; }
             if (!RoundComplete())
             {
                 Current = NextSeat(Current, p => !p.Folded && !p.AllIn);
                 return;
             }
+            if (DiscardsDue()) return;                                   // a human must throw a card away first
             if (Street == Street.River) { Showdown(); return; }
+            if (PauseBeforeRunout && !_runoutDecided && NoMoreBetting()) // nobody can bet any more: stop so a power-up can be used
+            {
+                RunoutPending = true;
+                _runoutStart = Community.Count;
+                Current = -1;
+                return;
+            }
             NextStreet();
         }
     }
@@ -224,7 +253,8 @@ public class GameEngine
     private void NextStreet()
     {
         Street++;
-        Community.AddRange(_dealer.DealBoard(Street)); // burns one card, then deals 3 / 1 / 1
+        Community.AddRange(Rules.Cross ? _dealer.DealBoard(Street, Street == Street.Flop ? 5 : 2) // Cross: 5 / 2 / 2
+                                       : _dealer.DealBoard(Street));                              // burns one card, then deals 3 / 1 / 1
         Log($"*** {Street}: {string.Join(" ", Community)} ***");
         foreach (var p in Players) { p.Bet = 0; p.HasActed = false; p.CanRaise = true; }
         CurrentBet = 0;
@@ -239,6 +269,8 @@ public class GameEngine
         int pot = Pot;
         winner.Chips += pot;
         Log($"{winner.Name} wins {pot} (everyone else folded)");
+        _pendingDiscard.Clear();
+        SettleShanKoeMee(true);
         EndHand();
     }
 
@@ -246,10 +278,19 @@ public class GameEngine
     {
         ShowdownReached = true;
         Street = Street.Showdown;
+        ResolvePendingDiscards();
         var alive = Players.Where(p => !p.Folded).ToList();
-        var scores = alive.ToDictionary(p => p, p => HandEvaluator.Evaluate(p.Hole.Concat(Community).ToList()));
+
+        // the board(s): normally one. Run it twice / thrice deals the rest of the board again for each extra run.
+        var boards = new List<IReadOnlyList<Card>> { Community };
+        for (int r = 1; r < RunCount; r++)
+            boards.Add(_dealer.DealExtraRun(Community, _runoutStart, Rules.Cross ? CrossBounds : StdBounds));
+        var scores = boards.Select(b => alive.ToDictionary(p => p, p => ScoreFor(p, b))).ToList();
+
         foreach (var p in alive)
-            Log($"{p.Name} shows {string.Join(" ", p.Hole)} - {HandEvaluator.Names[HandEvaluator.Category(scores[p])]}");
+            Log($"{p.Name} shows {string.Join(" ", p.Hole)} - {HandEvaluator.Names[HandEvaluator.Category(scores[0][p])]}");
+        if (boards.Count > 1)
+            for (int r = 0; r < boards.Count; r++) Log($"Run {r + 1}: {string.Join(" ", boards[r])}");
 
         // main pot + side pots, one layer per distinct all-in level
         var levels = Players.Where(p => p.Contrib > 0).Select(p => p.Contrib).Distinct().OrderBy(x => x).ToList();
@@ -260,22 +301,31 @@ public class GameEngine
             int layer = Players.Sum(p => Math.Min(p.Contrib, level) - Math.Min(p.Contrib, lo));
             var eligible = alive.Where(p => p.Contrib >= level).ToList();
             if (eligible.Count == 0) eligible = alive;
-            long best = eligible.Max(p => scores[p]);
-            // seat distance from the button: 0 = first seat left of the button ... n-1 = the button itself
-            var winners = eligible.Where(p => scores[p] == best)
-                                  .OrderBy(p => (Players.IndexOf(p) - Dealer - 1 + Players.Count) % Players.Count)
-                                  .ToList();
-            int share = layer / winners.Count, rest = layer % winners.Count;
-            for (int i = 0; i < winners.Count; i++)
-                winners[i].Chips += share + (i < rest ? 1 : 0); // odd chips: one each, starting left of the button
 
-            string names = string.Join(" & ", winners.Select(w => w.Name));
-            string hand = HandEvaluator.Names[HandEvaluator.Category(best)];
-            Log(levels.Count > 1 && level != levels[0]
-                ? $"Side pot {layer}: {names} win with {hand}"
-                : $"{names} win{(winners.Count == 1 ? "s" : "")} {layer} with {hand}");
+            for (int r = 0; r < boards.Count; r++)
+            {
+                // each run decides an equal part of every pot; odd chips go to the first runs
+                int part = layer / boards.Count + (r < layer % boards.Count ? 1 : 0);
+                if (part == 0) continue;
+                long best = eligible.Max(p => scores[r][p]);
+                // seat distance from the button: 0 = first seat left of the button ... n-1 = the button itself
+                var winners = eligible.Where(p => scores[r][p] == best)
+                                      .OrderBy(p => (Players.IndexOf(p) - Dealer - 1 + Players.Count) % Players.Count)
+                                      .ToList();
+                int share = part / winners.Count, rest = part % winners.Count;
+                for (int i = 0; i < winners.Count; i++)
+                    winners[i].Chips += share + (i < rest ? 1 : 0); // odd chips: one each, starting left of the button
+
+                string names = string.Join(" & ", winners.Select(w => w.Name));
+                string hand = HandEvaluator.Names[HandEvaluator.Category(best)];
+                string prefix = boards.Count > 1 ? $"Run {r + 1}: " : "";
+                Log(levels.Count > 1 && level != levels[0]
+                    ? $"{prefix}Side pot {part}: {names} win with {hand}"
+                    : $"{prefix}{names} win{(winners.Count == 1 ? "s" : "")} {part} with {hand}");
+            }
             prev = level;
         }
+        SettleShanKoeMee(false);
         EndHand();
     }
 
@@ -284,6 +334,7 @@ public class GameEngine
         HandOver = true;
         Street = Street.Showdown;
         Current = -1;
+        foreach (int seat in _held.Keys.ToList()) ReturnHeldToDeck(seat); // a card nobody swapped in goes back into the deck
         _dealer.VerifyIntegrity(); // 52 unique cards accounted for
         if (IsGameOver)
             Log(HumansAllOut ? "*** You are out of chips. Game over! ***" : "*** You won the game! ***");
@@ -306,6 +357,7 @@ public class GameEngine
         RequireInHand(seat);
         var p = Players[seat];
         if (holeIndex < 0 || holeIndex >= p.Hole.Count) throw new ArgumentOutOfRangeException(nameof(holeIndex));
+        PeelSticker(seat, holeIndex);
         Card fresh = _dealer.Replace(seat, p.Hole[holeIndex], wanted, NextInt);
         p.Hole[holeIndex] = fresh;
         Log(p.Name + " swaps a hole card");
@@ -338,15 +390,14 @@ public class GameEngine
         var p = Players[ownerSeat];
         if (holeIndex < 0 || holeIndex >= p.Hole.Count) throw new ArgumentOutOfRangeException(nameof(holeIndex));
         Card c = p.Hole[holeIndex];
-        _dealer.Reveal(ownerSeat, c, viewerSeat);
+        RevealInternal(ownerSeat, holeIndex, viewerSeat);
         return c;
     }
 
     // ---------------------------------------------------------------- helpers
     public string HandDescription(Player p)
     {
-        if (Community.Count < 3 || p.Hole.Count < 2) return "";
-        return HandEvaluator.Names[HandEvaluator.Category(HandEvaluator.Evaluate(p.Hole.Concat(Community).ToList()))];
+        return HandName(p);
     }
 
     private void PostBlind(Player p, int amount, string name)

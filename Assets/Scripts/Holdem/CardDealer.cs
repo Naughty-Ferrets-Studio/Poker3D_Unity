@@ -11,7 +11,7 @@ namespace Holdem
 /// Peek    = someone looked at a card in the deck (Viewer says who).
 /// Reveal  = a card already on the table (Seat = its owner) was shown to Viewer (-1 = everybody).
 /// </summary>
-public enum DealKind { Burn, Hole, Flop, Turn, River, Replace, Peek, Reveal }
+public enum DealKind { Burn, Hole, Flop, Turn, River, Replace, Peek, Reveal, Swap, Discard }
 
 /// <summary>
 /// One physical dealing action, in order. A 3D layer plays these back as animations.
@@ -39,6 +39,8 @@ public readonly struct DealEvent
             case DealKind.Replace: return $"Replace {(Seat >= 0 ? "seat " + Seat : "board")}: {Previous} -> {Card}";
             case DealKind.Peek:    return $"Peek (viewer {Viewer}): {Card}";
             case DealKind.Reveal:  return $"Reveal seat {Seat} to {(Viewer < 0 ? "everybody" : "seat " + Viewer)}: {Card}";
+            case DealKind.Swap:    return $"Face change seat {Seat}: {Previous} -> {Card}";
+            case DealKind.Discard: return $"Discard seat {Seat}: {Card}";
             default:               return Seat >= 0 ? $"{Kind} -> seat {Seat}: {Card}" : $"{Kind}: {Card}";
         }
     }
@@ -57,6 +59,7 @@ public sealed class CardDealer
     private readonly List<DealEvent> _events = new List<DealEvent>();
     private readonly List<Card> _burned = new List<Card>();
     private readonly HashSet<Card> _out = new HashSet<Card>(); // every card that is currently outside the deck
+    private bool _jokerInPlay;
 
     public IReadOnlyList<DealEvent> Events => _events;
     public IReadOnlyList<Card> Burned => _burned;
@@ -77,6 +80,7 @@ public sealed class CardDealer
         _events.Clear();
         _burned.Clear();
         _out.Clear();
+        _jokerInPlay = false;
     }
 
     private Card DrawOut()
@@ -130,6 +134,103 @@ public sealed class CardDealer
         return dealt;
     }
 
+    /// <summary>Like DealBoard(street) but with your own card count (the Cross deals 5 / 2 / 2).</summary>
+    public IReadOnlyList<Card> DealBoard(Street street, int count)
+    {
+        DealKind kind;
+        switch (street)
+        {
+            case Street.Flop:  kind = DealKind.Flop;  break;
+            case Street.Turn:  kind = DealKind.Turn;  break;
+            case Street.River: kind = DealKind.River; break;
+            default: throw new ArgumentException($"No board cards are dealt on {street}.");
+        }
+        var burn = DrawOut();
+        _burned.Add(burn);
+        _events.Add(new DealEvent(DealKind.Burn, -1, burn));
+        var dealt = new List<Card>(count);
+        for (int i = 0; i < count; i++)
+        {
+            var c = DrawOut();
+            dealt.Add(c);
+            _events.Add(new DealEvent(kind, -1, c));
+        }
+        return dealt;
+    }
+
+    /// <summary>
+    /// Run it twice / thrice: deals the rest of the board again from the deck (one burn card before each street, as usual).
+    /// boundaries = board size after each street, for example 3, 4, 5. No table events: the table only shows the first run.
+    /// </summary>
+    public List<Card> DealExtraRun(IReadOnlyList<Card> board, int startCount, int[] boundaries)
+    {
+        var run = board.Take(startCount).ToList();
+        foreach (int b in boundaries)
+        {
+            if (b <= startCount) continue;
+            _burned.Add(DrawOut());
+            while (run.Count < b) run.Add(DrawOut());
+        }
+        return run;
+    }
+
+    /// <summary>Shuffles the joker into the deck at a random depth. The deck then has 53 cards.</summary>
+    public void AddJoker(Func<int, int> nextInt = null)
+    {
+        if (_jokerInPlay) return;
+        _deck.InsertRandom(Card.Joker, nextInt);
+        _jokerInPlay = true;
+    }
+
+    /// <summary>Deals one extra hole card to a seat (Pineapple).</summary>
+    public Card DealExtraHole(int seat)
+    {
+        Card c = DrawOut();
+        _events.Add(new DealEvent(DealKind.Hole, seat, c));
+        return c;
+    }
+
+    /// <summary>A hole card goes face-down into the discard pile. It stays "out" of the deck, so the 52-card check still passes.</summary>
+    public void Discard(int seat, Card card)
+    {
+        if (!_out.Contains(card)) throw new InvalidOperationException($"Card {card} is not on the table.");
+        _events.Add(new DealEvent(DealKind.Discard, seat, card));
+    }
+
+    /// <summary>Secretly takes a card out of the deck (the top one, or a specific one) and keeps it out of play (Bumba Card).</summary>
+    public Card Steal(Card? wanted = null)
+    {
+        Card c = wanted.HasValue ? _deck.Take(wanted.Value) : _deck.Draw();
+        if (!_out.Add(c)) throw new InvalidOperationException($"Duplicate card taken: {c}");
+        return c;
+    }
+
+    /// <summary>A stolen card goes back into the deck at a random depth.</summary>
+    public void ReturnToDeck(Card card, Func<int, int> nextInt = null)
+    {
+        if (!_out.Remove(card)) throw new InvalidOperationException($"Card {card} is not out of the deck.");
+        _deck.InsertRandom(card, nextInt);
+    }
+
+    /// <summary>The old card leaves the seat for the discard pile and the new (already stolen) card takes its place.</summary>
+    public void SwapIntoPlace(int seat, Card old, Card fresh)
+    {
+        if (!_out.Contains(old) || !_out.Contains(fresh)) throw new InvalidOperationException("Both cards must be out of the deck.");
+        _events.Add(new DealEvent(DealKind.Replace, seat, fresh, old, -1));
+    }
+
+    /// <summary>Records that the face of a card changed in place (a sticker, or a Snatch the Sock swap). Nothing moves in or out of the deck.</summary>
+    public void FaceChange(int seat, Card previous, Card now)
+    {
+        _events.Add(new DealEvent(DealKind.Swap, seat, now, previous, -1));
+    }
+
+    /// <summary>Like Reveal, but the card may be a fake (a sticker), so it is not checked against the table.</summary>
+    public void RevealUnchecked(int ownerSeat, Card card, int viewerSeat = -1)
+    {
+        _events.Add(new DealEvent(DealKind.Reveal, ownerSeat, card, null, viewerSeat));
+    }
+
     // ---------------------------------------------------------------- power-up card actions
     /// <summary>Looks at a card in the deck without drawing it (0 = the top card) and records who looked.</summary>
     public Card PeekDeck(int viewerSeat, int depthFromTop = 0)
@@ -175,8 +276,9 @@ public sealed class CardDealer
         foreach (var c in _deck.RemainingCards)
             if (!seen.Add(c))
                 throw new InvalidOperationException($"Card is both on the table and in the deck: {c}");
-        if (seen.Count != 52)
-            throw new InvalidOperationException($"Expected 52 cards, found {seen.Count}.");
+        int expected = _jokerInPlay ? 53 : 52;
+        if (seen.Count != expected)
+            throw new InvalidOperationException($"Expected {expected} cards, found {seen.Count}.");
     }
 }
 }

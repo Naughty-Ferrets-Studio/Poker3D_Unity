@@ -8,9 +8,19 @@ namespace Holdem.PowerUps
     {
         public static readonly IReadOnlyList<PowerUpDefinition> All = new PowerUpDefinition[]
         {
+            // Common
+            new BombPot(),
+            // Rare and up (each class holds all its versions)
+            new ShanKoeMee(),
+            new WildCard(),
+            new TheCross(),
+            new RunIt(),
+            new Pineapple(),
+            new SnatchTheSock(),
+            new DisguisedCard(),
+            new BumbaCard(),
             new XRay(),
             new Dice(),
-            new BumbaCard(),
         };
 
         public static PowerUpDefinition Find(string id) => All.FirstOrDefault(d => d.Id == id);
